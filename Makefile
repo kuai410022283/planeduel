@@ -24,7 +24,7 @@ ARCHS      := amd64:x86_64 arm64:aarch64
 GOFLAGS    := -trimpath
 LDFLAGS    := -s -w
 
-.PHONY: help build build-amd64 build-arm64 test vet fmt run pack fnpack clean all
+.PHONY: help build build-amd64 build-arm64 test vet fmt run pack fnpack docker clean all
 
 help: ## 显示可用命令
 	@awk 'BEGIN{FS=":.*## "} /^[a-zA-Z_-]+:.*## /{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -82,6 +82,9 @@ pack: build fnpack ## 打包成 fnOS 安装包 .fpk
 	@ls -lh $(OUT)
 
 all: test pack ## 测试 + 打包
+
+docker: ## 本地构建容器镜像（需要 docker）
+	docker build -t $(APP):$(VERSION) --build-arg VERSION=v$(VERSION) .
 
 clean: ## 清理构建产物
 	@rm -rf bin dist/*.fpk dist/*.sha256 dist/pkg.tar.gz $(BINPREFIX)-* dist/pkg/$(APP)/app/$(APP)/$(APP)-server $(FNPACK)

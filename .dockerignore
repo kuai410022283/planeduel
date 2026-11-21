@@ -1,0 +1,16 @@
+# 构建产物与本地数据，不进镜像上下文
+.git
+.github
+bin/
+data/
+.gocache/
+dist/*.fpk
+dist/*.sha256
+dist/pkg.tar.gz
+dist/pkg/*/app/*/planeduel-server
+dist/pkg/*/app/*/planeduel-server-*
+*.fpk
+*.log
+*.out.txt
+*.err.txt
+docs/

@@ -643,3 +643,43 @@ make clean    # 清理产物
 
 另外网关用户有额外照顾：新浏览器进来时**优先复用编号最小的离线管理员会话**，
 所以只要没人连着，永远回到「管理员」，不会再一路涨到「管理员3/4/5」。
+## 部署方式
+
+三种，按场景选：
+
+| 方式 | 适合 | 入口 |
+| --- | --- | --- |
+| **飞牛 fnOS 应用（fpk）** | 装在飞牛 NAS 上 | 飞牛桌面图标（统一网关，免登录） |
+| **容器镜像** | 任何 Linux / NAS / 群晖 / Unraid | `http://<IP>:28082`，管理口 127.0.0.1:18088 |
+| **单文件二进制** | Windows / macOS / Linux 桌面 | 同上，`PD_PUBLIC_PORT_ENABLED=1` 启动 |
+
+### 容器
+
+```bash
+docker run -d --name planeduel \
+  -p 28082:28082 -p 127.0.0.1:18088:18088 \
+  -e PD_PUBLIC_PORT_ENABLED=1 \
+  -v planeduel-data:/data --restart unless-stopped \
+  laoknas/planeduel:latest
+```
+
+镜像同时提供 `linux/amd64` 与 `linux/arm64`。完整说明见 [deploy/docker.md](deploy/docker.md)。
+
+### 单文件二进制
+
+从 Releases 下载对应平台的压缩包，解压后：
+
+```bash
+PD_PUBLIC_PORT_ENABLED=1 ./planeduel -data ./data      # Linux / macOS
+set PD_PUBLIC_PORT_ENABLED=1 && planeduel.exe -data data   # Windows
+```
+
+支持 `linux/amd64`、`linux/arm64`、`linux/armv7`、`windows/amd64`、`windows/arm64`、`darwin/amd64`、`darwin/arm64`。
+
+### 发布流程（GitHub Actions）
+
+| 工作流 | 触发 | 产物 |
+| --- | --- | --- |
+| `build-fpk.yml` | push / tag | fnOS 安装包 `planeduel_all_v*.fpk`（x86_64 + aarch64） |
+| `docker.yml` | tag / 手动 | 多架构镜像 → GHCR（配了 Docker Hub secrets 时同时推 `laoknas/planeduel`） |
+| `release.yml` | tag / 手动 | 7 个平台的压缩包 + `SHA256SUMS.txt` → Release |

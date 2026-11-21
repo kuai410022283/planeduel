@@ -1,0 +1,138 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号，三段数字（例如 0.9.8）"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 确定版本
+        id: ver
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          V="${INPUT_VERSION}"
+          if [ -z "${V}" ] && [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "${V}" ]; then
+            V="$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p' dist/pkg/planeduel/manifest | tr -d ' ')"
+          fi
+          if [[ ! "${V}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::版本号必须是 x.y.z，当前为 ${V}"
+            exit 1
+          fi
+          echo "version=${V}" >>"${GITHUB_OUTPUT}"
+          echo "tag=v${V}" >>"${GITHUB_OUTPUT}"
+
+      - name: 单测
+        run: make test
+
+      - name: 构建多平台压缩包
+        shell: bash
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          targets=(
+            "linux amd64"
+            "linux arm64"
+            "linux arm"
+            "windows amd64"
+            "windows arm64"
+            "darwin amd64"
+            "darwin arm64"
+          )
+          for target in "${targets[@]}"; do
+            read -r goos goarch <<<"${target}"
+            name="planeduel${V:+_}${V}_${goos}_${goarch}"
+            [ "${goarch}" = "arm" ] && name="${name}v7"
+            pkgdir="dist/release/${name}"
+            mkdir -p "${pkgdir}/deploy"
+            echo ">> ${goos}/${goarch}"
+            bin="planeduel"
+            [ "${goos}" = "windows" ] && bin="planeduel.exe"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM=7 \
+              go build -trimpath -ldflags "-s -w -X main.version=v${V}" -o "${pkgdir}/${bin}" ./cmd/server
+            cp README.md LICENSE "${pkgdir}/"
+            cp deploy/compose.yaml deploy/entrypoint.sh "${pkgdir}/deploy/" 2>/dev/null || true
+            if [ "${goos}" = "windows" ]; then
+              (cd dist/release && zip -qr "${name}.zip" "${name}")
+            else
+              (cd dist/release && tar -czf "${name}.tar.gz" "${name}")
+            fi
+            rm -rf "${pkgdir}"
+          done
+          (cd dist/release && sha256sum * > SHA256SUMS.txt)
+          ls -lh dist/release
+
+      - name: 发布 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          NOTES="$(mktemp)"
+          cat >"${NOTES}" <<EOF
+          纸上打飞机 ${TAG}
+
+          ## 下载对应平台
+          | 平台 | 文件 |
+          | --- | --- |
+          | Linux x86_64 | planeduel_${TAG#v}_linux_amd64.tar.gz |
+          | Linux ARM64 | planeduel_${TAG#v}_linux_arm64.tar.gz |
+          | Linux ARMv7 | planeduel_${TAG#v}_linux_armv7.tar.gz |
+          | Windows x64 | planeduel_${TAG#v}_windows_amd64.zip |
+          | Windows ARM64 | planeduel_${TAG#v}_windows_arm64.zip |
+          | macOS Intel | planeduel_${TAG#v}_darwin_amd64.tar.gz |
+          | macOS Apple Silicon | planeduel_${TAG#v}_darwin_arm64.tar.gz |
+          | 飞牛 fnOS | planeduel_all_${TAG}.fpk（x86_64 + aarch64） |
+
+          ## 运行（Linux/macOS）
+          \`\`\`bash
+          tar -xzf planeduel_${TAG#v}_linux_amd64.tar.gz
+          cd planeduel_${TAG#v}_linux_amd64
+          PD_PUBLIC_PORT_ENABLED=1 ./planeduel -data ./data
+          # 打开 http://127.0.0.1:28082
+          \`\`\`
+
+          管理入口只监听 127.0.0.1:8081（可用 -admin-listen 修改）。
+          EOF
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/release/*.tar.gz dist/release/*.zip dist/release/SHA256SUMS.txt --clobber
+          else
+            gh release create "${TAG}" dist/release/*.tar.gz dist/release/*.zip dist/release/SHA256SUMS.txt \
+              --title "纸上打飞机 ${TAG}" --notes-file "${NOTES}"
+          fi
+          rm -f "${NOTES}"

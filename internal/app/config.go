@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -49,6 +50,30 @@ func LoadConfig(path string) (*ConfigStore, error) {
 		s.cfg.NickTTLDays = 30
 		changed = true
 	}
+	// 环境变量覆盖（容器/桌面版部署用；优先级高于 config.json，每次启动生效）
+	//   PD_PUBLIC_PORT           对外端口号
+	//   PD_PUBLIC_PORT_ENABLED   是否开启对外端口（1/true/yes/on）
+	//   PD_NICK_TTL_DAYS         游客昵称兜底 TTL（天）
+	if v := strings.TrimSpace(os.Getenv("PD_PUBLIC_PORT")); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 && p < 65536 && s.cfg.PublicPort != p {
+			s.cfg.PublicPort = p
+			changed = true
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("PD_PUBLIC_PORT_ENABLED")); v != "" {
+		on := v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+		if s.cfg.PublicPortEnabled != on {
+			s.cfg.PublicPortEnabled = on
+			changed = true
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("PD_NICK_TTL_DAYS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && s.cfg.NickTTLDays != n {
+			s.cfg.NickTTLDays = n
+			changed = true
+		}
+	}
+
 	if changed {
 		if err := s.save(); err != nil {
 			return nil, err

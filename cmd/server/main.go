@@ -15,6 +15,9 @@ import (
 	"planeduel/internal/app"
 )
 
+// version 由构建时注入（-ldflags "-X main.version=v0.9.8"）
+var version = "dev"
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -132,6 +135,7 @@ func main() {
 		}
 	}()
 
+	log.Printf("版本: %s", version)
 	log.Printf("管理权限：仅飞牛网关入口（无口令）")
 	if cfg.PublicPortEnabled {
 		log.Printf("直连地址: http://<NAS-IP>:%d", cfg.PublicPort)
