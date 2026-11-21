@@ -874,6 +874,10 @@ const PLACE = {
   selected: -1,   // 当前选中的飞机序号
   hover: null,    // 拖动时鼠标所在的机头格
   ready: false,   // 已按「开始」（锁定）
+  msg: '',        // 需要保留一帧以上的提示（例如旋转结果）
+  msgKind: '',
+  downCell: null, // 按下时所在格（用来区分「单击选中」和「拖动」）
+  moved: false,
 };
 
 function shapeOutline(orient) {
@@ -1016,11 +1020,17 @@ function renderPlacing(r) {
   $('place-start').disabled = PLACE.ships.length !== 3;
   $('place-unready').hidden = !PLACE.ready;
   for (const id of ['place-rotate', 'place-random', 'place-clear']) $(id).disabled = !editable;
-  const hint = $('placing-hint');
   if (PLACE.ready) {
     setHint('布阵已锁定。要重新调整就先点「取消开始」。', 'warn');
+  } else if (PLACE.msg) {
+    setHint(PLACE.msg, PLACE.msgKind);
   } else if (PLACE.drag) {
-    setHint(`拖动中：${ORIENT_NAME[PLACE.orient]}，松开落位`, '');
+    const o = ORIENT_NAME[PLACE.orient];
+    const grabbed = PLACE.grab ? `${PLACE.grab.index + 1} 号机` : '新飞机';
+    setHint(`拖动中：${grabbed}，${o}，松开落位`, '');
+  } else if (PLACE.selected >= 0 && PLACE.ships[PLACE.selected]) {
+    const s = PLACE.ships[PLACE.selected];
+    setHint(`已选中 ${PLACE.selected + 1} 号机（${ORIENT_NAME[s.orient]}）· 点「↻ 旋转」换方向，双击删除`, '');
   } else {
     setHint('点棋盘放飞机：点哪格，机头就朝哪格；按住已放好的飞机可以拖动，双击删除。', '');
   }
@@ -1048,6 +1058,9 @@ function onPlaceDown(e) {
   const pos = cellPosOf(t.dataset.cell);
   const idx = shipIndexAt(pos);
   PLACE.drag = true;
+  PLACE.msg = '';
+  PLACE.downCell = pos;
+  PLACE.moved = false;
   PLACE.grab = idx >= 0 ? { ship: PLACE.ships[idx], index: idx } : null;
   PLACE.orient = idx >= 0 ? PLACE.ships[idx].orient : PLACE.orient;
   PLACE.hover = idx >= 0 ? headCellOf(PLACE.ships[idx]) : pos;
@@ -1065,6 +1078,9 @@ function onPlaceMove(e) {
   if (!PLACE.drag) return;
   const pos = cellFromEvent(e);
   if (!pos) return;
+  if (PLACE.downCell && (pos.row !== PLACE.downCell.row || pos.col !== PLACE.downCell.col)) {
+    PLACE.moved = true;
+  }
   PLACE.hover = pos;
   render();
   e.preventDefault();
@@ -1076,6 +1092,16 @@ function onPlaceUp(e) {
   const back = PLACE.grab; // 拖动已有飞机时非 null；新放飞机时为 null
   PLACE.drag = false;
   PLACE.grab = null;
+
+  // 只是点了一下（没拖动）：仅仅选中它，位置保持不变
+  if (back && !PLACE.moved) {
+    PLACE.ships.splice(back.index, 0, back.ship);
+    PLACE.selected = back.index;
+    PLACE.hover = null;
+    render();
+    e.preventDefault();
+    return;
+  }
   let ship = null;
   if (pos) {
     const cand = shipFromHead(pos.row, pos.col, PLACE.orient);
@@ -1104,6 +1130,7 @@ function onPlaceCancel() {
   const back = PLACE.grab;
   PLACE.drag = false;
   PLACE.grab = null;
+  PLACE.moved = false;
   PLACE.hover = null;
   if (back) PLACE.ships.splice(back.index, 0, back.ship);
   render();
@@ -1129,30 +1156,64 @@ $('board-mine').addEventListener('pointercancel', onPlaceCancel);
 $('board-mine').addEventListener('dblclick', onPlaceDblClick);
 $('board-mine').addEventListener('contextmenu', (e) => { if (placingActive(state.room)) e.preventDefault(); });
 
+// ringOffsets 返回与原点距离为 d 的一圈偏移（按由近到远排）
+function ringOffsets(d) {
+  const out = [];
+  for (let dr = -d; dr <= d; dr++) {
+    for (let dc = -d; dc <= d; dc++) {
+      if (Math.max(Math.abs(dr), Math.abs(dc)) !== d) continue;
+      out.push([dr, dc]);
+    }
+  }
+  return out;
+}
+
+// rotateShip 先试原地旋转；转不开就在附近（最多 3 格）找一个放得下的位置。
+// 返回 { ok, moved, msg }
+function rotateShip(i) {
+  const ship = PLACE.ships[i];
+  const head = headCellOf(ship);
+  const o = (ship.orient + 1) % 4;
+
+  const cand = shipFromHead(head.row, head.col, o);
+  if (placementValid(cand, i)) {
+    PLACE.ships[i] = cand;
+    syncPlacingSend();
+    return { ok: true, moved: false, msg: `${i + 1} 号机已转为${ORIENT_NAME[o]}` };
+  }
+  for (let d = 1; d <= 3; d++) {
+    for (const [dr, dc] of ringOffsets(d)) {
+      const t = shipFromHead(head.row + dr, head.col + dc, o);
+      if (placementValid(t, i)) {
+        PLACE.ships[i] = t;
+        syncPlacingSend();
+        return { ok: true, moved: true, msg: `${i + 1} 号机已转为${ORIENT_NAME[o]}（自动挪了一点位置）` };
+      }
+    }
+  }
+  return { ok: false, moved: false, msg: `这附近放不下${ORIENT_NAME[o]}的机身，先把旁边的飞机挪开或点「清除」重来` };
+}
+
 $('place-rotate').addEventListener('click', () => {
   if (!placingEditable(state.room)) return;
   if (PLACE.drag) {
     PLACE.orient = (PLACE.orient + 1) % 4;
+    PLACE.msg = `松开后按${ORIENT_NAME[PLACE.orient]}放置`;
+    PLACE.msgKind = '';
     render();
     return;
   }
   const i = PLACE.selected;
   if (i >= 0 && PLACE.ships[i]) {
-    const head = headCellOf(PLACE.ships[i]);
-    const o = (PLACE.ships[i].orient + 1) % 4;
-    const ship = shipFromHead(head.row, head.col, o);
-    if (placementValid(ship, i)) {
-      PLACE.ships[i] = ship;
-      syncPlacingSend();
-      setHint(`${i + 1} 号机已转为${ORIENT_NAME[o]}`, '');
-    } else {
-      setHint('这个位置转不开，先挪一下再旋转', 'err');
-    }
+    const res = rotateShip(i);
+    PLACE.msg = res.msg;
+    PLACE.msgKind = res.ok ? '' : 'err';
     render();
     return;
   }
   PLACE.orient = (PLACE.orient + 1) % 4;
-  setHint(`下一个朝向：${ORIENT_NAME[PLACE.orient]}`, '');
+  PLACE.msg = `下一个朝向：${ORIENT_NAME[PLACE.orient]}（点一架飞机可单独旋转它）`;
+  PLACE.msgKind = '';
   render();
 });
 

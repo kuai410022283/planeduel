@@ -165,13 +165,14 @@ check('中央飞机旋转后朝向改变', A.PLACE.ships[0].orient !== oBefore);
 const headAfter = A.headCellOf(A.PLACE.ships[0]);
 check('旋转后机头位置不变', headAfter.row === headBefore.row && headAfter.col === headBefore.col);
 
-// 角落上的飞机转不开 → 应保持原样
+// 角落上的飞机原地转不开 → 自动挪一点位置后仍能转过去
 reset();
 click('A3');
-const cornerBefore = JSON.stringify(A.PLACE.ships);
 A.PLACE.selected = 0;
+const cornerOrient = A.PLACE.ships[0].orient;
 els.get('place-rotate').fire('click', {});
-check('角落飞机转不开时保持不变', JSON.stringify(A.PLACE.ships) === cornerBefore, JSON.stringify(A.PLACE.ships));
+check('角落飞机能转（自动挪位）', A.PLACE.ships[0].orient !== cornerOrient, JSON.stringify(A.PLACE.ships));
+check('自动挪位后仍在棋盘内', A.shipCells(A.PLACE.ships[0]).every((c) => c.row >= 0 && c.row < 10 && c.col >= 0 && c.col < 10));
 
 // ---- 阶段 4：删除 / 锁定 / 清除
 reset();
