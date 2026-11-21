@@ -40,6 +40,9 @@ jobs:
       - name: make test
         run: make test
 
+      - name: 前端渲染冒烟
+        run: make ui-test
+
   pack:
     name: 打包 fpk
     needs: test

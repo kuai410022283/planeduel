@@ -50,7 +50,8 @@ type soloView struct {
 	Winner     int         `json:"winner"` // 0=我赢，1=机器人赢
 	Alive      int         `json:"alive"`
 	EnemyAlive int         `json:"enemy_alive"`
-	MyPlanes   []string    `json:"my_planes"`   // 布阵图上的飞机格
+	MyPlanes   []string    `json:"my_planes"`   // 布阵图上的飞机格（打平，兼容旧前端）
+	MyPlaneGroups []planeView `json:"my_plane_groups"` // 按机分组：每架的格子/机头/是否存活
 	MyHeads    []string    `json:"my_heads"`    // 我的机头
 	MyMarks    []mark      `json:"my_marks"`    // 对手打在我棋盘上的结果
 	EnemyMarks []mark      `json:"enemy_marks"` // 我打在敌情图上的结果
@@ -209,13 +210,18 @@ func (s *Solo) view() soloView {
 		MyPlanes: []string{}, MyHeads: []string{}, MyMarks: []mark{}, EnemyMarks: []mark{},
 	}
 	mine := s.m.Board(0)
+	groups := make([]planeView, 0, mine.Count())
 	for i := 0; i < mine.Count(); i++ {
 		p := mine.Plane(i)
+		pv := planeView{Alive: !p.Dead(), Head: p.Head.Name(), Cells: make([]string, 0, len(p.Cells))}
 		for _, c := range p.Cells {
+			pv.Cells = append(pv.Cells, c.Name())
 			v.MyPlanes = append(v.MyPlanes, c.Name())
 		}
 		v.MyHeads = append(v.MyHeads, p.Head.Name())
+		groups = append(groups, pv)
 	}
+	v.MyPlaneGroups = groups
 	for _, mv := range s.m.Moves() {
 		mk := mark{Cell: mv.Cell.Name(), FB: mv.FB.String(), By: mv.By}
 		if mv.By == 1 {

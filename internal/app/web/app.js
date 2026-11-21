@@ -470,6 +470,10 @@ function renderSolo() {
   const enemyMarks = new Map((v ? v.enemy_marks : []).map((m) => [m.cell, m.fb]));
   const live = !!v && !v.finished;
 
+  // 练习局的布阵也按机分组上色；老服务端没有分组时退化成打平的格子
+  const planes = (v && v.my_plane_groups)
+    ? v.my_plane_groups.map((p) => ({ cells: p.cells || [], head: p.head, alive: p.alive !== false }))
+    : [];
   paintPlanes($('board-mine'), planes, myMarks, false, -1);
   $('board-mine').classList.remove('editing');
   paintBoard($('board-enemy'), null, enemyMarks, live);
