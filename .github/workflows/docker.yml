@@ -14,20 +14,24 @@ on:
 
 permissions:
   contents: read
-  packages: write          # 推 GHCR 需要
+  packages: write
 
 concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  GHCR_IMAGE: ghcr.io/kuai410022283/planeduel
   DOCKERHUB_IMAGE: laoknas/planeduel
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # secrets 不能直接写在 if 里，这里先落到 env 再判断
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
@@ -45,25 +49,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Docker Hub 为可选：仓库里配了 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 才推
-      - name: 登录 Docker Hub（可选）
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+      - name: 登录 Docker Hub（仅在配置了 secrets 时）
+        if: env.DH_TOKEN != ''
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ env.DH_USER }}
+          password: ${{ env.DH_TOKEN }}
+
+      - name: 确定要推送的镜像列表
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "list<<EOF"
+            echo "${GHCR_IMAGE}"
+            if [ -n "${DH_TOKEN:-}" ]; then
+              echo "${DOCKERHUB_IMAGE}"
+            fi
+            echo "EOF"
+          } >>"${GITHUB_OUTPUT}"
+          cat "${GITHUB_OUTPUT}"
 
       - name: 计算镜像标签
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ${{ env.GHCR_IMAGE }}
-            ${{ secrets.DOCKERHUB_TOKEN != '' && env.DOCKERHUB_IMAGE || '' }}
+          images: ${{ steps.images.outputs.list }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
+            type=ref,event=branch,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest
 
       - name: 构建并推送（linux/amd64 + linux/arm64）
