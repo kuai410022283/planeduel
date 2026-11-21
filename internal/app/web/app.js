@@ -340,48 +340,7 @@ function renderDuel(r) {
   paintBoard($('board-enemy'), null, enemyMarks, live);
 
   setTitles(`${r.names[r.me] || '我'} 的布阵`, `${r.names[1 - r.me] || '对手'} 的敌情`);
-  const opp = r.names[1 - r.me] || '对手';
-  const me = r.names[r.me] || '我';
-  const st = $('duel-status');
-  const left = r.deadline_ms ? Math.max(0, Math.round((r.deadline_ms - Date.now()) / 1000)) : null;
-  const REASON = {
-    win: '三架飞机全部被击落',
-    timeout: '回合超时',
-    offline: '掉线超过宽限',
-    leave: '对手主动离开',
-  };
-
-  if (r.state === 'waiting') {
-    $('duel-rematch').hidden = true;
-    st.textContent = '等待对手加入…';
-    st.className = 'status';
-    setTurnbar('等待对手加入', `把房间码 ${r.code} 发给朋友`, '', '');
-  } else if (r.finished || r.state === 'done') {
-    $('duel-rematch').hidden = false;
-    const why = REASON[r.reason] || '对局结束';
-    if (r.winner === r.me) {
-      st.textContent = `🏆 你赢了（${why}）`;
-      st.className = 'status done';
-      setTurnbar('🏆 你赢了', why, 'done', '');
-    } else {
-      st.textContent = `你输了（${why}）`;
-      st.className = 'status lose';
-      setTurnbar('这局输了', why, 'lose', '');
-    }
-  } else if (live) {
-    $('duel-rematch').hidden = true;
-    const chain = r.last_shot && r.last_shot.by === r.me ? '（连击，继续打）' : '';
-    st.textContent = `轮到你出手${left !== null ? `（剩余 ${left}s）` : ''}${chain}`;
-    st.className = 'status';
-    setTurnbar(`轮到你（${me}）`, chain ? '连击，继续打' : '点右侧敌情图喊号', 'mine',
-      left !== null ? `剩余 ${left}s` : '');
-  } else {
-    $('duel-rematch').hidden = true;
-    st.textContent = `等待 ${opp} 出手${left !== null ? `（剩余 ${left}s）` : ''}`;
-    st.className = 'status wait';
-    setTurnbar(`等待 ${opp} 出手`, '对手正在选格子', 'theirs',
-      left !== null ? `剩余 ${left}s` : '');
-  }
+  applyDuelStatus(r);
 
   $('duel-code').textContent = r.code || '—';
   if (r.turn_sec) {
@@ -398,17 +357,79 @@ function renderDuel(r) {
   $('log').textContent = r.last_shot
     ? `${r.names[r.last_shot.by] || ''} 打 ${r.last_shot.cell} → ${r.last_shot.fb}`
     : '';
-
-  updateTimer(r);
 }
 
-function updateTimer(r) {
-  const el = $('duel-timer');
-  if (!r || !r.deadline_ms || r.state !== 'playing') { el.textContent = ''; return; }
-  const left = Math.max(0, Math.round((r.deadline_ms - Date.now()) / 1000));
-  el.textContent = left > 0 ? `剩余 ${left}s` : '已超时';
-  el.className = 'tb-timer' + (left <= 20 ? ' warn' : '');
+// 剩余秒数格式：不足一分钟显示 45s，超过显示 4:32
+function fmtLeft(sec) {
+  if (sec === null || sec === undefined) return '';
+  if (sec >= 60) return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  return `${sec}s`;
 }
+
+function leftSeconds(r) {
+  if (!r || !r.deadline_ms || r.state !== 'playing') return null;
+  return Math.max(0, Math.round((r.deadline_ms - Date.now()) / 1000));
+}
+
+// applyDuelStatus 只刷新与时间相关的文字（每秒调用一次），不重建棋盘
+function applyDuelStatus(r) {
+  if (!r) return;
+  const st = $('duel-status');
+  const live = r.state === 'playing' && r.turn === r.me;
+  const opp = r.names[1 - r.me] || '对手';
+  const me = r.names[r.me] || '我';
+  const left = leftSeconds(r);
+  const leftTxt = left === null ? '' : `（剩余 ${fmtLeft(left)}）`;
+  const REASON = {
+    win: '三架飞机全部被击落',
+    timeout: '回合超时',
+    offline: '掉线超过宽限',
+    leave: '对手主动离开',
+  };
+
+  if (r.state === 'waiting') {
+    $('duel-rematch').hidden = true;
+    st.textContent = '等待对手加入…';
+    st.className = 'status';
+    setTurnbar('等待对手加入', `把房间码 ${r.code} 发给朋友`, '');
+  } else if (r.finished || r.state === 'done') {
+    $('duel-rematch').hidden = false;
+    const why = REASON[r.reason] || '对局结束';
+    if (r.winner === r.me) {
+      st.textContent = `🏆 你赢了（${why}）`;
+      st.className = 'status done';
+      setTurnbar('🏆 你赢了', why, 'done');
+    } else {
+      st.textContent = `你输了（${why}）`;
+      st.className = 'status lose';
+      setTurnbar('这局输了', why, 'lose');
+    }
+  } else if (live) {
+    $('duel-rematch').hidden = true;
+    const chain = r.last_shot && r.last_shot.by === r.me ? '（连击，继续打）' : '';
+    st.textContent = `轮到你出手${leftTxt}${chain}`;
+    st.className = 'status';
+    setTurnbar(`轮到你（${me}）`, chain ? '连击，继续打' : '点右侧敌情图喊号', 'mine');
+  } else {
+    $('duel-rematch').hidden = true;
+    st.textContent = `等待 ${opp} 出手${leftTxt}`;
+    st.className = 'status wait';
+    setTurnbar(`等待 ${opp} 出手`, '对手正在选格子', 'theirs');
+  }
+
+  // 右上角倒计时胶囊：每秒跟着走
+  const chip = $('duel-timer');
+  if (chip) {
+    chip.textContent = left === null ? '' : `剩余 ${fmtLeft(left)}`;
+    chip.className = 'tb-timer' + (left !== null && left <= 20 ? ' warn' : '');
+  }
+
+  $('duel-code').textContent = r.code || '—';
+  if (r.turn_sec) $('duel-timer').dataset.limit = String(r.turn_sec);
+}
+
+
+
 
 function renderSolo() {
   resetTitles();
@@ -818,4 +839,4 @@ buildBoard($('board-enemy'), true);
 render();
 initSegs();
 loadSession();
-setInterval(() => { if (state.room) updateTimer(state.room); }, 1000);
+setInterval(() => { if (state.room) applyDuelStatus(state.room); }, 1000);
