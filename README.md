@@ -27,13 +27,13 @@ go build -o bin/server.exe ./cmd/server
 ```
 [管理] 本机入口 http://127.0.0.1:8081（仅回环地址）
 [端口] 对外访问已关闭（仅飞牛网关可用）
-管理口令（设置面板/调试用）: xxxxx
+管理权限：仅飞牛网关入口（无口令）
 ```
 
 浏览器打开 <http://127.0.0.1:8081> 即可（热座演示：随机布阵 → 轮流点击对方棋盘）。
 
 > 端口默认是关闭的：只有回环管理入口 + （部署在 fnOS 上时的）统一网关可用。
-> 想对局域网/外网开放，就去「设置面板」填管理口令、勾选「允许独立端口对外访问」。
+> 想对局域网/外网开放，就在网关页面底部的「设置」里勾选「允许独立端口对外访问」（无需口令，网关登录本身即管理员）。
 
 ## 三个入口
 
@@ -53,7 +53,7 @@ go build -o bin/server.exe ./cmd/server
 | GET | `/api/session` | 当前游客身份 |
 | POST | `/api/session` | `{"nick":"小明"}` 占用昵称（全局唯一，重复返回 409） |
 | GET | `/api/players` | 在线玩家列表：`[{nick, online, idle_sec, me}]` |
-| GET | `/api/admin/settings` | 需 `X-Admin-Token` 或网关注入的 `X-Trim-Isadmin: true` |
+| GET | `/api/admin/settings` | 仅网关 / 本机回环入口可用；独立端口一律 403 |
 | PUT | `/api/admin/settings` | `{"public_port_enabled":true,"public_port":18080}` 热开关端口 |
 | POST | `/api/solo` | 开一局单人视角对局（随机布阵，对手为随机陪练） |
 | POST | `/api/solo/fire` | `{"id":"...","cell":"C5"}` 喊号；返回我方的完整视角 |
@@ -70,7 +70,7 @@ go build -o bin/server.exe ./cmd/server
 | 入口 | 通道 | 昵称 | 设置面板 | 管理接口 |
 | --- | --- | --- | --- | --- |
 | 飞牛网关 `/app/planeduel/` | `gateway` | **自动取 NAS 账号**（如 `laok`），无需输入 | 显示；管理员可直接改 | 允许（管理员） |
-| 本机回环 `127.0.0.1:18088` | `admin` | 无 | 显示 | 允许（需口令） |
+| 本机回环 `127.0.0.1:18088` | `admin` | 无 | 显示 | 允许（本机信任） |
 | 独立端口 `:28082` | `port` | 需手动起昵称 | **不显示** | **一律 403** |
 
 端口通道会忽略客户端伪造的 `X-Trim-Username` / `X-Trim-Isadmin`，所以外人无法借此冒充管理员。
@@ -110,7 +110,7 @@ go vet ./...
 | 数据目录 | `/vol1/@appdata/planeduel`（`config.json` 在这里） |
 | 日志 | `/vol1/@appdata/planeduel/info.log` |
 | 运行用户 | `planeduel`（`config/privilege` 的 `run-as: package`） |
-| 管理口令 | `config.json` 的 `admin_token`，启动日志里也有一份 |
+| ~~管理口令~~ | 0.9.6 起已移除，权限只按入口判定 |
 
 ### 打包产物
 
@@ -372,7 +372,7 @@ GET :28082/api/admin/settings   → 403（外网仍无管理权限）
 | --- | --- |
 | 分段控件 `.seg` | 时限、出手规则从下拉框改为两段切换，点击即选 |
 | 开关 `.toggle` | 设置面板的「允许独立端口访问」改成滑动开关 |
-| 输入组 `.input-group` | 输入框 + 按钮同一行、等高对齐（房间码、端口号、口令） |
+| 输入组 `.input-group` | 输入框 + 按钮同一行、等高对齐（房间码、端口号） |
 | 按钮 | 统一 40px 高，`primary` / `ghost` / `btn-sm` 三级，hover 抬升、聚焦描边 |
 
 ### 网关顶栏
@@ -627,4 +627,13 @@ make clean    # 清理产物
 打包前会做一次行尾归一（`sed -i 's/\r$//'`），避免 Windows 上提交的 CRLF 让 `cmd/*` 脚本在飞牛里跑不起来；
 仓库同时用 `.gitattributes` 固定这些文件的 LF 存储。
 
-> 需要 arm64 安装包时：manifest 的 `platform` 改为 `all`，并在 `make build` 里加一条 `GOARCH=arm64` 的构建即可（当前只出 x86_64）。
+> `platform = all`：一个安装包同时带 `planeduel-server-x86_64` 与 `planeduel-server-aarch64`，生命周期脚本按 `uname -m` 自动选对应程序。`make build-amd64` / `make build-arm64` 可以单独构建某一个架构。
+## 管理员昵称的生命周期（0.9.6）
+
+网关进来固定叫「管理员」。但关掉的浏览器会留下会话，历史上因此出现过「管理员3」「管理员4」越涨越多。现在两条措施：
+
+1. **优先复用**：新浏览器进来时，复用「编号最小且离线」的管理员会话 —— 只要没人连着，永远回到「管理员」；
+2. **空闲回收**：管理员类昵称（管理员、管理员2、管理员3…）**离线超过 10 分钟自动释放**，
+   进程里每 5 分钟扫一次，日志会打「[GC] 释放了 N 个空闲管理员昵称」。
+
+游客昵称不受影响，仍按 `nick_ttl_days`（默认 30 天）保留，避免误删别人占的名字。

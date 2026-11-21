@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -210,6 +211,40 @@ func (s *SessionStore) Ensure(fnosName string) (*Session, error) {
 // AdminNick 是飞牛网关进来的固定昵称（用户仍可自行改名）。
 const AdminNick = "管理员"
 
+// isAdminNick 判断某个昵称键是否属于「管理员」系列（管理员、管理员2、管理员3…）。
+func isAdminNick(key string) bool {
+	if key == strings.ToLower(AdminNick) {
+		return true
+	}
+	prefix := strings.ToLower(AdminNick)
+	if !strings.HasPrefix(key, prefix) {
+		return false
+	}
+	rest := key[len(prefix):]
+	if rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// adminSlot 解析「管理员N」的序号，管理员=1。
+func adminSlot(key string) int {
+	prefix := strings.ToLower(AdminNick)
+	if key == prefix {
+		return 1
+	}
+	n, err := strconv.Atoi(key[len(prefix):])
+	if err != nil || n <= 0 {
+		return 1 << 30
+	}
+	return n
+}
+
 // CreateAdmin 给网关用户固定的「管理员」昵称（不关心是哪个 NAS 账号）。
 // 同一浏览器靠 Cookie 复用会话；另一个浏览器进来会得到「管理员2」。
 func (s *SessionStore) CreateAdmin(online func(token string) bool) (*Session, error) {
@@ -217,14 +252,25 @@ func (s *SessionStore) CreateAdmin(online func(token string) bool) (*Session, er
 	defer s.mu.Unlock()
 	s.gcLocked()
 
-	// 只有一个网关管理员：旧的管理员会话如果不在线，就直接复用它，
-	// 避免每开一个新浏览器就变成「管理员2」「管理员3」。
-	if existing, ok := s.byKey[strings.ToLower(AdminNick)]; ok {
-		if online == nil || !online(existing.Token) {
-			existing.Seen = time.Now()
-			cp := *existing
-			return &cp, nil
+	// 只有一个网关管理员：优先复用「编号最小且离线」的管理员会话，
+	// 避免每开一个新浏览器就往后加（管理员3、管理员4…）。
+	var reuse *Session
+	bestSlot := 1 << 30
+	for key, sess := range s.byKey {
+		if !isAdminNick(key) {
+			continue
 		}
+		if online != nil && online(sess.Token) {
+			continue // 还连着，别抢
+		}
+		if slot := adminSlot(key); slot < bestSlot {
+			bestSlot, reuse = slot, sess
+		}
+	}
+	if reuse != nil {
+		reuse.Seen = time.Now()
+		cp := *reuse
+		return &cp, nil
 	}
 
 	for i := 0; i < 20; i++ {
@@ -309,4 +355,35 @@ func (s *SessionStore) List(onlineWithin time.Duration, self string) []PlayerVie
 		return out[i].Nick < out[j].Nick
 	})
 	return out
+}
+
+// ReapIdleAdmin 释放「离线超过 grace」的管理员会话，让昵称回到「管理员」。
+// 只处理管理员系列（游客昵称仍按 TTL 保留，避免误删别人的名字）。
+func (s *SessionStore) ReapIdleAdmin(grace time.Duration, online func(string) bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcLocked()
+
+	cut := time.Now().Add(-grace)
+	n := 0
+	for key, sess := range s.byKey {
+		if !isAdminNick(key) {
+			continue
+		}
+		if online != nil && online(sess.Token) {
+			continue // 还在线，不能动
+		}
+		if sess.Seen.After(cut) {
+			continue // 离线但还没到 10 分钟
+		}
+		delete(s.byTok, sess.Token)
+		delete(s.byKey, key)
+		for fn, fs := range s.byFnos {
+			if fs == sess {
+				delete(s.byFnos, fn)
+			}
+		}
+		n++
+	}
+	return n
 }

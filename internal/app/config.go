@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -14,7 +15,7 @@ import (
 type Config struct {
 	PublicPortEnabled bool   `json:"public_port_enabled"` // 独立端口对外访问开关
 	PublicPort        int    `json:"public_port"`
-	AdminToken        string `json:"admin_token"`   // 管理口令（网关管理员或本地管理员用）
+
 	NickTTLDays       int    `json:"nick_ttl_days"` // 游客昵称保留天数
 }
 
@@ -36,8 +37,8 @@ func LoadConfig(path string) (*ConfigStore, error) {
 		}
 	}
 	changed := false
-	if s.cfg.AdminToken == "" {
-		s.cfg.AdminToken = RandomToken(18)
+	// 0.9.6 起不再有管理口令：旧配置里残留的字段顺手清掉
+	if raw, err := os.ReadFile(path); err == nil && strings.Contains(string(raw), "admin_token") {
 		changed = true
 	}
 	if s.cfg.PublicPort == 0 {

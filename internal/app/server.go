@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -261,25 +260,12 @@ func (s *Server) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// isAdmin 管理权限只由「入口」决定，不再有口令：
+//   - 飞牛网关：登录态即管理员
+//   - 本机回环 127.0.0.1：相当于已在本机（只有 NAS 自身能访问）
+//   - 独立端口（对外）：永远不是管理员
 func (s *Server) isAdmin(r *http.Request) bool {
-	switch channelOf(r) {
-	case chPort:
-		// 独立端口（对外）一律无管理权限
-		return false
-	case chGateway:
-		// 飞牛网关入口本身就是「管理员」：不依赖任何请求头
-		return true
-	}
-	// 2) 本地管理口令（端口模式 / 调试用）
-	tok := r.Header.Get("X-Admin-Token")
-	if tok == "" {
-		tok = r.URL.Query().Get("token")
-	}
-	cfg := s.cfg.Get()
-	if tok == "" || cfg.AdminToken == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(tok), []byte(cfg.AdminToken)) == 1
+	return channelOf(r) != chPort
 }
 
 type settingsResp struct {
@@ -287,7 +273,7 @@ type settingsResp struct {
 	Port       int        `json:"public_port"`
 	Status     PortStatus `json:"status"`
 	Gateway    bool       `json:"gateway_mode"`
-	AdminToken string     `json:"admin_token,omitempty"`
+
 	Sessions   int        `json:"sessions"`
 	Rules      game.Rules `json:"rules"`
 }
@@ -297,7 +283,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, settingsResp{
 		Enabled: cfg.PublicPortEnabled, Port: cfg.PublicPort,
 		Status: s.ports.Status(), Gateway: s.gateway != "",
-		AdminToken: cfg.AdminToken, Sessions: s.sessions.Count(),
+		Sessions: s.sessions.Count(),
 		Rules: game.DefaultRules(),
 	})
 }
@@ -429,4 +415,9 @@ func readJSON(r *http.Request, v any) error {
 		return nil
 	}
 	return json.Unmarshal(b, v)
+}
+
+// ReapIdleAdminSessions 定期清理离线超过 grace 的管理员会话（昵称回到「管理员」）。
+func (s *Server) ReapIdleAdminSessions(grace time.Duration) int {
+	return s.sessions.ReapIdleAdmin(grace, s.hub.TokenOnline)
 }

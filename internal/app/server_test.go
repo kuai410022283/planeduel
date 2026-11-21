@@ -29,7 +29,7 @@ func TestAdminBlockedOnPortChannel(t *testing.T) {
 	h := s.Channeled("port")
 
 	req := httptest.NewRequest(http.MethodPut, "/api/admin/settings", strings.NewReader(`{"public_port":1234}`))
-	req.Header.Set("X-Admin-Token", s.cfg.Get().AdminToken)
+	// 管理权限只看入口，不需要口令
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -83,7 +83,7 @@ func TestHotToggleKeepsPortChannel(t *testing.T) {
 	admin := s.Channeled("admin")
 	body := fmt.Sprintf(`{"public_port_enabled":true,"public_port":%d}`, port)
 	req := httptest.NewRequest(http.MethodPut, "/api/admin/settings", strings.NewReader(body))
-	req.Header.Set("X-Admin-Token", s.cfg.Get().AdminToken)
+	// 管理权限只看入口，不需要口令
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -104,7 +104,7 @@ func TestHotToggleKeepsPortChannel(t *testing.T) {
 
 	// 端口通道上的管理接口必须 403（即使带上正确的口令）
 	req2, _ := http.NewRequest(http.MethodPut, base+"/api/admin/settings", strings.NewReader(`{"public_port":1}`))
-	req2.Header.Set("X-Admin-Token", s.cfg.Get().AdminToken)
+	// 管理权限只看入口，不需要口令
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatalf("请求失败: %v", err)

@@ -13,26 +13,42 @@ MANIFEST   := $(PKGDIR)/manifest
 VERSION    := $(shell sed -n 's/^version[[:space:]]*=[[:space:]]*//p' $(MANIFEST) | tr -d ' ')
 PLATFORM   := $(shell sed -n 's/^platform[[:space:]]*=[[:space:]]*//p' $(MANIFEST) | tr -d ' ')
 BINDIR     := $(PKGDIR)/app/$(APP)
-BINARY     := $(BINDIR)/$(APP)-server
+BINPREFIX  := $(BINDIR)/$(APP)-server
 OUT        := dist/$(APP)_$(PLATFORM)_v$(VERSION).fpk
 
 FNPACK_VER ?= 1.2.3
 FNPACK     ?= $(CURDIR)/fnpack
 FNPACK_URL ?= https://static2.fnnas.com/fnpack/fnpack-$(FNPACK_VER)-linux-amd64
 
+ARCHS      := amd64:x86_64 arm64:aarch64
 GOFLAGS    := -trimpath
 LDFLAGS    := -s -w
 
-.PHONY: help build test vet fmt run pack fnpack clean all
+.PHONY: help build build-amd64 build-arm64 test vet fmt run pack fnpack clean all
 
 help: ## 显示可用命令
 	@awk 'BEGIN{FS=":.*## "} /^[a-zA-Z_-]+:.*## /{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## 交叉编译 linux/amd64 服务端，输出到打包目录
-	@echo ">> $(APP) v$(VERSION)  linux/amd64"
+build: ## 交叉编译 x86_64 + aarch64 两个架构到打包目录（platform = all）
 	@mkdir -p $(BINDIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/server
-	@chmod +x $(BINARY) && ls -lh $(BINARY)
+	@for pair in $(ARCHS); do \
+		arch=$${pair%%:*}; suffix=$${pair##*:}; \
+		echo ">> $(APP) v$(VERSION)  linux/$$arch -> planeduel-server-$$suffix"; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch \
+			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINDIR)/planeduel-server-$$suffix ./cmd/server || exit 1; \
+		chmod +x $(BINDIR)/planeduel-server-$$suffix; \
+	done
+	@ls -lh $(BINDIR)/planeduel-server-*
+
+build-amd64: ## 只构建 x86_64
+	@mkdir -p $(BINDIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINDIR)/planeduel-server-x86_64 ./cmd/server
+	@chmod +x $(BINDIR)/planeduel-server-x86_64 && ls -lh $(BINDIR)/planeduel-server-x86_64
+
+build-arm64: ## 只构建 aarch64
+	@mkdir -p $(BINDIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINDIR)/planeduel-server-aarch64 ./cmd/server
+	@chmod +x $(BINDIR)/planeduel-server-aarch64 && ls -lh $(BINDIR)/planeduel-server-aarch64
 
 test: ## 跑全部单测（规则引擎 / 房间 / 重连 / 观战 / 昵称）
 	go test ./... -count=1
@@ -57,6 +73,8 @@ fnpack: ## 下载 fnpack 打包工具
 
 pack: build fnpack ## 打包成 fnOS 安装包 .fpk
 	@echo ">> 打包 v$(VERSION) ($(PLATFORM))"
+	@# Windows 上打出来的包容易丢可执行位，这里统一补上
+	@chmod +x $(PKGDIR)/cmd/* $(BINDIR)/$(APP)-server-* 2>/dev/null || true
 	@cd $(PKGDIR) && "$(FNPACK)" build
 	@mv $(PKGDIR)/$(APP).fpk $(OUT)
 	@cd dist && (sha256sum $(notdir $(OUT)) > $(notdir $(OUT)).sha256 2>/dev/null || \
@@ -66,5 +84,5 @@ pack: build fnpack ## 打包成 fnOS 安装包 .fpk
 all: test pack ## 测试 + 打包
 
 clean: ## 清理构建产物
-	@rm -rf bin dist/*.fpk dist/*.sha256 dist/pkg.tar.gz $(BINARY) $(FNPACK)
+	@rm -rf bin dist/*.fpk dist/*.sha256 dist/pkg.tar.gz $(BINPREFIX)-* dist/pkg/$(APP)/app/$(APP)/$(APP)-server $(FNPACK)
 	@echo ">> 已清理"

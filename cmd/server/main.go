@@ -117,10 +117,14 @@ func main() {
 				log.Printf("[GC] 清理了 %d 局过期对局", n)
 			}
 			sessions.Count() // 顺带触发昵称过期回收
+			// 管理员昵称的空闲回收：关掉的浏览器不该一直占着「管理员 / 管理员2…」
+			if n := srv.ReapIdleAdminSessions(10 * time.Minute); n > 0 {
+				log.Printf("[GC] 释放了 %d 个空闲管理员昵称", n)
+			}
 		}
 	}()
 
-	log.Printf("管理口令（设置面板/调试用）: %s", cfg.AdminToken)
+	log.Printf("管理权限：仅飞牛网关入口（无口令）")
 	if cfg.PublicPortEnabled {
 		log.Printf("直连地址: http://<NAS-IP>:%d", cfg.PublicPort)
 	}

@@ -10,7 +10,18 @@ APP_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 DEST="${TRIM_APPDEST:-${APP_ROOT}/target}"
 VAR="${TRIM_PKGVAR:-${APP_ROOT}/var}"
 
-BIN="${DEST}/planeduel/planeduel-server"
+# platform = all：一个包装两种架构，运行时按 CPU 选择对应二进制
+case "$(uname -m)" in
+    x86_64|amd64)  ARCH_SUFFIX="x86_64" ;;
+    aarch64|arm64) ARCH_SUFFIX="aarch64" ;;
+    *)             ARCH_SUFFIX="$(uname -m)" ;;
+esac
+
+BIN="${DEST}/planeduel/planeduel-server-${ARCH_SUFFIX}"
+# 兼容早期单架构包（只有一个不带后缀的二进制）
+if [ ! -x "${BIN}" ] && [ -x "${DEST}/planeduel/planeduel-server" ]; then
+    BIN="${DEST}/planeduel/planeduel-server"
+fi
 LOG_FILE="${VAR}/info.log"
 PID_FILE="${VAR}/app.pid"
 DATA_DIR="${VAR}/data"
@@ -45,7 +56,7 @@ start_process() {
     fi
 
     mkdir -p "${DATA_DIR}"
-    log_msg "starting: ${BIN} (dest=${DEST}, data=${DATA_DIR})"
+    log_msg "starting: ${BIN} (arch=${ARCH_SUFFIX}, dest=${DEST}, data=${DATA_DIR})"
 
     TRIM_APPDEST="${DEST}" \
     PD_DATA="${DATA_DIR}" \
@@ -91,7 +102,7 @@ stop_process() {
         rm -f "${PID_FILE}"
     fi
     # 兜底：安装回调与手动启动撞车时可能留下多个实例，这里一并清掉
-    pkill -f "${BIN}" 2>/dev/null || true
+    pkill -f "planeduel/planeduel-server" 2>/dev/null || true
     rm -f "${DEST}/app.sock"
     log_msg "stopped"
     return 0

@@ -757,54 +757,29 @@ async function loadSession() {
   } catch { /* ignore */ }
 }
 
+// 管理权限只由入口决定：飞牛网关 / 本机回环 = 管理员；独立端口永远不是。
+// 没有口令，所以这里只看服务端返回的 can_admin。
 async function initSettings(ctx) {
   const card = $('settings-card');
-  if (ctx.channel !== 'gateway') { card.hidden = true; return; }
+  if (!ctx.can_admin) { card.hidden = true; return; }
   card.hidden = false;
-
-  if (ctx.can_admin) {
-    $('token-row').hidden = true;
-    try {
-      const s = await call('admin/settings');
-      $('settings-box').hidden = false;
-      $('port-enabled').checked = s.public_port_enabled;
-      $('port').value = s.public_port;
-      renderPort(s);
-    } catch (e) {
-      const n = $('port-status');
-      n.textContent = e.message;
-      n.className = 'hint err';
-    }
-    return;
-  }
-  $('token-row').hidden = false;
-  const n = $('port-status');
-  n.className = 'hint';
-  n.textContent = '当前飞牛账号不是管理员；如需修改端口设置，请填写管理口令。';
-}
-
-$('token-load').addEventListener('click', async () => {
-  state.token = $('token').value.trim();
   try {
-    const s = await call('admin/settings', { headers: { 'X-Admin-Token': state.token } });
+    const s = await call('admin/settings');
     $('settings-box').hidden = false;
-    $('token-row').hidden = true;
     $('port-enabled').checked = s.public_port_enabled;
     $('port').value = s.public_port;
     renderPort(s);
   } catch (e) {
-    $('settings-box').hidden = true;
     const n = $('port-status');
     n.textContent = e.message;
     n.className = 'hint err';
   }
-});
+}
 
 $('port-apply').addEventListener('click', async () => {
   try {
     const s = await call('admin/settings', {
       method: 'PUT',
-      headers: { 'X-Admin-Token': state.token },
       body: JSON.stringify({
         public_port_enabled: $('port-enabled').checked,
         public_port: Number($('port').value),
