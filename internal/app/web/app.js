@@ -100,9 +100,9 @@ function stopReconnect() {
 // scheduleReconnect 显示真实的倒计时，并在倒计时结束时真的去重连
 function scheduleReconnect() {
   if (state.noReconnect) {
-    setConn('这个身份已在别的窗口', false);
+    setConn('已在其他窗口连接', false);
     const b = $('reconnect');
-    if (b) b.hidden = true;
+    if (b) b.hidden = false; // 保留手动夺回入口，避免看起来"卡死"
     return;
   }
   reconnectAttempt += 1;
@@ -207,10 +207,19 @@ function handleWS(msg) {
       $('log').textContent = msg.winner === state.room?.me ? '对手超时，你赢了' : '你超时了，判负';
       break;
     case 'dup':
-      // 同一身份开在两个窗口：停止重连并提示改名
+    case 'replaced':
+      // 同一个身份在别处连上了（刷新/另开窗口/旧连接僵死）：停止自动重连，
+      // 但保留「立即重连」按钮 —— 点一下就能把身份夺回来。
       state.noReconnect = true;
-      setConn('这个身份已在别的窗口', false);
-      $('log').textContent = msg.msg;
+      stopReconnect();
+      setConn('已在其他窗口连接', false);
+      {
+        const btn = $('reconnect');
+        if (btn) btn.hidden = false;
+      }
+      $('log').className = 'log err';
+      $('log').textContent = (msg.msg || '') +
+        ' 如果这是你刚刷新或只想用当前窗口，点「立即重连」即可继续这局。';
       break;
     case 'info':
       $('log').className = 'log';
@@ -667,6 +676,7 @@ $('join-btn').addEventListener('click', () => {
 $('duel-leave').addEventListener('click', () => send({ t: 'room.leave' }));
 $('reconnect').addEventListener('click', () => {
   reconnectAttempt = 0;
+  state.noReconnect = false; // 手动夺回后恢复正常自动重连
   stopReconnect();
   connectWS();
 });

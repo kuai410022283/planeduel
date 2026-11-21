@@ -38,6 +38,14 @@ type Client struct {
 	lastSeen time.Time
 }
 
+// notifyReplaced 告诉被顶替的连接：同一个身份在别处连上了，别再自动重连。
+func (c *Client) notifyReplaced() {
+	if c == nil || c.send == nil {
+		return
+	}
+	_ = c.send([]byte(`{"t":"replaced","msg":"这个身份已在另一处重新连上（可能是你刷新了页面或另开了窗口）"}`))
+}
+
 type invite struct {
 	ID        string
 	From      string
@@ -115,19 +123,12 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mu.Lock()
-	// 同一个身份（同一 token）已经有一个活连接：直接拒绝新连接，
-	// 免得两个窗口互相踢、界面看着像"点了没反应"。
-	if old, exists := h.clients[cl.Nick]; exists && old.Token == cl.Token {
-		h.mu.Unlock()
-		_ = ws.WriteText([]byte(`{"t":"dup","msg":"这个身份已经在另一个窗口打开了，请先把其中一个窗口改个昵称（比如后面加个数字）"}`))
-		_ = ws.WriteClose()
-		_ = ws.Close()
-		return
-	}
-	if old, exists := h.clients[cl.Nick]; exists && old.Token != cl.Token {
-		// 同昵称但不同身份：把旧连接关掉，避免两个窗口抢同一个昵称
-		old.kill()
-	}
+	// 同一昵称已经有连接：一律由新连接接管。
+	//   - 同 token（刷新页面 / 关掉再开 / 旧连接僵死没断干净）→ 顶替旧连接并通知它
+	//   - 不同 token（两个窗口抢同一昵称）→ 直接关掉旧的
+	// 这样"刷新后进不去"不会再有 150 秒的空窗，也不会两个窗口无限互踢：
+	// 被顶替的一侧收到 replaced 后停止自动重连，只能手动点「立即重连」夺回。
+	displaced := h.clients[cl.Nick]
 	h.clients[cl.Nick] = cl
 
 	// 断线重连：把原先属于这个 token 的座位接管回来
@@ -139,6 +140,13 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.mu.Unlock()
+
+	if displaced != nil && displaced != cl {
+		if displaced.Token == cl.Token {
+			displaced.notifyReplaced()
+		}
+		displaced.kill()
+	}
 
 	h.broadcastPlayers()
 	h.send(cl, map[string]any{"t": "welcome", "nick": cl.Nick})
