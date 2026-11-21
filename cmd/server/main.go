@@ -49,7 +49,6 @@ func main() {
 	// 每个入口绑定一个「通道」，服务端据此决定是否给管理能力：
 	// 端口通道永远没有管理权限，网关通道需飞牛管理员，回环管理口用于恢复。
 	adminHandler := srv.Channeled("admin")
-	portHandler := srv.PortHandler()
 	gatewayHandler := srv.Channeled("gateway")
 
 	// 入口 0：本机管理入口（仅回环）。端口关闭时也能进设置面板，网关故障时还能救急。
@@ -69,12 +68,16 @@ func main() {
 		}
 	}
 
-	// 入口 1：独立端口（受设置面板开关控制，默认关闭）
-	if err := ports.Apply(cfg.PublicPortEnabled, cfg.PublicPort, portHandler); err != nil {
-		log.Printf("[端口] 未开启: %v", err)
-	} else if cfg.PublicPortEnabled {
-		log.Printf("[端口] 已监听 :%d（对外可直连）", cfg.PublicPort)
-	} else {
+	// 入口 1：独立端口（受设置面板开关控制，默认关闭；被占用时自动顺延到 28000-28099）
+	st, actualPort, switched, notice := srv.ApplyPortConfig()
+	switch {
+	case st.Listening && switched > 0:
+		log.Printf("[端口] %s，实际监听 :%d", notice, actualPort)
+	case st.Listening:
+		log.Printf("[端口] 已监听 :%d（对外可直连）", actualPort)
+	case notice != "":
+		log.Printf("[端口] %s", notice)
+	default:
 		log.Printf("[端口] 对外访问已关闭（仅飞牛网关可用）")
 	}
 

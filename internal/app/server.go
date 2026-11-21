@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -273,6 +274,8 @@ type settingsResp struct {
 	Port       int        `json:"public_port"`
 	Status     PortStatus `json:"status"`
 	Gateway    bool       `json:"gateway_mode"`
+	SwitchedFrom int      `json:"switched_from,omitempty"` // 因占用而换端口时，原端口
+	Notice       string   `json:"notice,omitempty"`        // 给面板看的提示文案
 
 	Sessions   int        `json:"sessions"`
 	Rules      game.Rules `json:"rules"`
@@ -314,18 +317,50 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err.Error())
 		return
 	}
-	applyErr := s.ports.Apply(cfg.PublicPortEnabled, cfg.PublicPort, s.PortHandler())
-	resp := settingsResp{
+	status, _, switched, notice := s.applyPortConfig(cfg.PublicPortEnabled, cfg.PublicPort)
+	cfg = s.cfg.Get() // 端口可能被顺延，开关可能被回滚
+	writeJSON(w, 200, settingsResp{
 		Enabled: cfg.PublicPortEnabled, Port: cfg.PublicPort,
-		Status: s.ports.Status(), Gateway: s.gateway != "",
+		Status: status, Gateway: s.gateway != "",
 		Sessions: s.sessions.Count(), Rules: game.DefaultRules(),
+		SwitchedFrom: switched, Notice: notice,
+	})
+}
+
+// applyPortConfig 按配置开启端口：被占用时自动顺延，实在找不到就回滚为关闭。
+// 返回监听状态、实际端口、原端口（0 表示没换）、以及给面板的提示文案。
+func (s *Server) applyPortConfig(enabled bool, port int) (PortStatus, int, int, string) {
+	if !enabled {
+		s.ports.Apply(false, port, nil)
+		return s.ports.Status(), port, 0, ""
 	}
-	if applyErr != nil {
-		resp.Status.Error = applyErr.Error()
-		writeJSON(w, 200, resp) // 配置已保存，但监听失败，错误在 status.error 里
-		return
+
+	actual, switched, err := s.ports.ApplyWithFallback(true, port, s.PortHandler(), fallbackAttempts)
+	if err == nil {
+		if switched > 0 {
+			_, _ = s.cfg.Update(func(c *Config) error {
+				c.PublicPort = actual
+				return nil
+			})
+			return s.ports.Status(), actual, switched,
+				fmt.Sprintf("端口 %d 已被占用，已自动改用 %d", switched, actual)
+		}
+		return s.ports.Status(), actual, 0, ""
 	}
-	writeJSON(w, 200, resp)
+
+	// 彻底失败：把开关回滚成关闭，避免面板显示「已开启」却没在监听
+	s.ports.Apply(false, port, nil)
+	_, _ = s.cfg.Update(func(c *Config) error {
+		c.PublicPortEnabled = false
+		return nil
+	})
+	return s.ports.Status(), port, 0, err.Error() + "；对外访问已自动关闭"
+}
+
+// ApplyPortConfig 供启动时调用：按当前配置开启端口（同样带顺延与回滚）。
+func (s *Server) ApplyPortConfig() (PortStatus, int, int, string) {
+	cfg := s.cfg.Get()
+	return s.applyPortConfig(cfg.PublicPortEnabled, cfg.PublicPort)
 }
 
 // ---------------------------------------------------------------- 在线玩家

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +25,13 @@ type PortStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// 端口被占用时的自动顺延范围与尝试次数
+const (
+	fallbackAttempts = 20
+	fallbackLo       = 28000
+	fallbackHi       = 28099
+)
+
 func (p *PortManager) Status() PortStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -34,30 +42,83 @@ func (p *PortManager) Status() PortStatus {
 	return st
 }
 
+// IsAddrInUse 判断绑定失败是否因为端口已被占用（各平台错误文案不同）。
+func IsAddrInUse(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, s := range []string{
+		"address already in use",              // Linux / macOS
+		"only one usage of each socket address", // Windows
+		"in use",                              // 兜底
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // Apply 按配置开启/关闭端口监听；重复调用是幂等的。
 func (p *PortManager) Apply(enabled bool, port int, h http.Handler) error {
+	_, _, err := p.ApplyWithFallback(enabled, port, h, 0)
+	return err
+}
+
+// ApplyWithFallback 开启端口；被占用时在 [fallbackLo, fallbackHi] 内从 port+1 顺延，
+// 最多尝试 attempts 次。返回值 actual 为实际监听端口，switchedFrom 为原端口（0 表示没切换）。
+func (p *PortManager) ApplyWithFallback(enabled bool, port int, h http.Handler, attempts int) (actual, switchedFrom int, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if !enabled {
 		p.stopLocked()
-		return nil
+		return port, 0, nil
 	}
 	if port < 1 || port > 65535 {
 		p.lastErr = fmt.Errorf("端口号 %d 不合法", port)
-		return p.lastErr
+		return port, 0, p.lastErr
 	}
+
 	addr := fmt.Sprintf(":%d", port)
 	if p.ln != nil && p.addr == addr {
-		return nil // 已经在监听了
+		return port, 0, nil // 已经在监听了
 	}
-	p.stopLocked()
 
+	// 1) 先试用户指定的端口
+	firstErr := p.tryListenLocked(port, h)
+	if firstErr == nil {
+		return port, 0, nil
+	}
+	if !IsAddrInUse(firstErr) || attempts <= 0 {
+		p.lastErr = firstErr
+		return port, 0, firstErr
+	}
+
+	// 2) 被占用：向后找第一个能绑上的端口
+	for i := 1; i <= attempts; i++ {
+		cand := port + i
+		if cand < fallbackLo || cand > fallbackHi {
+			continue
+		}
+		if err := p.tryListenLocked(cand, h); err == nil {
+			return cand, port, nil
+		}
+	}
+
+	p.lastErr = fmt.Errorf("端口 %d 已被占用，%d-%d 范围内也没找到可用端口", port, fallbackLo, fallbackHi)
+	return port, 0, p.lastErr
+}
+
+// tryListenLocked 假定已持有锁，尝试监听指定端口并接管服务。
+func (p *PortManager) tryListenLocked(port int, h http.Handler) error {
+	addr := fmt.Sprintf(":%d", port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		p.lastErr = fmt.Errorf("监听 %s 失败: %w", addr, err)
-		return p.lastErr
+		return fmt.Errorf("监听 %s 失败: %w", addr, err)
 	}
+	p.stopLocked()
 	srv := &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,

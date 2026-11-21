@@ -796,16 +796,31 @@ $('port-apply').addEventListener('click', async () => {
 function renderPort(s) {
   const n = $('port-status');
   n.className = 'hint';
+  // 服务端状态是准的：端口可能被自动顺延，开关可能被回滚
+  $('port-enabled').checked = !!s.public_port_enabled;
+  if (s.public_port) $('port').value = s.public_port;
+
+  const live = !!(s.status && s.status.listening);
+  const addr = s.status && s.status.addr ? s.status.addr.replace(/^:/, '') : '';
+
+  if (s.public_port_enabled && live) {
+    if (s.notice) {
+      n.textContent = `${s.notice}，实际监听 ${addr}。`;
+      n.className = 'hint warn';
+    } else {
+      n.textContent = `独立端口监听中：${addr}（局域网/外网可直连）。`;
+    }
+    return;
+  }
   if (!s.public_port_enabled) {
-    n.textContent = '独立端口已关闭：只能通过飞牛网关（/app/planeduel）访问。';
+    n.textContent = s.notice
+      ? `${s.notice} 请换一个端口再试。`
+      : '独立端口已关闭：只能通过飞牛网关（/app/planeduel）访问。';
+    n.className = s.notice ? 'hint err' : 'hint';
     return;
   }
-  if (s.status && s.status.error) {
-    n.textContent = `监听失败：${s.status.error}`;
-    n.className = 'hint err';
-    return;
-  }
-  n.textContent = `独立端口监听中：${s.status.addr}（局域网/外网可直连）。`;
+  n.textContent = `监听失败：${s.status.error}`;
+  n.className = 'hint err';
 }
 
 // ---------------------------------------------------------------- 启动
