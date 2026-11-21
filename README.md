@@ -8,6 +8,7 @@
 ![go](https://img.shields.io/badge/Go-1.27-00ADD8)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/platform-amd64%20%7C%20arm64-lightgrey)
+![ghcr](https://img.shields.io/badge/ghcr.io-planeduel-2496ED?logo=docker&logoColor=white)
 
 ## 特性
 
@@ -36,6 +37,20 @@
 
 ### 容器
 
+官方镜像发布在 GitHub Container Registry，**公开可匿名拉取**，支持 `linux/amd64` 与 `linux/arm64`：
+
+```bash
+docker pull ghcr.io/kuai410022283/planeduel:latest
+```
+
+| 标签 | 含义 |
+| --- | --- |
+| `latest` | 最新构建 |
+| `0.9.8` | 指定版本（每次发版固定一个） |
+| `0.9` | 同一小版本的最新修订 |
+
+启动：
+
 ```bash
 docker run -d --name planeduel \
   -p 28082:28082 \
@@ -46,11 +61,31 @@ docker run -d --name planeduel \
   ghcr.io/kuai410022283/planeduel:latest
 ```
 
-打开 `http://<宿主机IP>:28082/` 即可开局。镜像支持 `linux/amd64` 与 `linux/arm64`。
+打开 `http://<宿主机IP>:28082/` 即可开局；管理入口是 `http://127.0.0.1:18088/`。
+
+`docker compose` 方式：
+
+```yaml
+services:
+  planeduel:
+    image: ghcr.io/kuai410022283/planeduel:latest
+    restart: unless-stopped
+    ports:
+      - "28082:28082"
+      - "127.0.0.1:18088:18088"
+    environment:
+      PD_PUBLIC_PORT_ENABLED: "1"
+      TZ: Asia/Shanghai
+    volumes:
+      - planeduel-data:/data
+
+volumes:
+  planeduel-data:
+```
 
 > 管理口 18088 只映射到 `127.0.0.1`：管理权限按入口判定，本机回环即管理员，不要暴露到局域网。
 
-也可以直接从源码构建：`docker build -t planeduel .`（或 `make docker`）。
+也可以从源码自建：`docker build -t planeduel .`（或 `make docker`）。更多参数与备份说明见 [deploy/docker.md](deploy/docker.md)。
 
 ### 单文件二进制
 

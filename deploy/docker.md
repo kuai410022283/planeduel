@@ -1,6 +1,13 @@
 # 容器部署（Docker / Podman）
 
-镜像同时提供 `linux/amd64` 与 `linux/arm64`（NAS 上的 ARM 机型也能跑）。
+镜像地址：`ghcr.io/kuai410022283/planeduel`（GitHub Container Registry，**公开、可匿名拉取**）。
+
+```bash
+docker pull ghcr.io/kuai410022283/planeduel:latest
+```
+
+标签：`latest`（最新）、`0.9.8`（具体版本）、`0.9`（同小版本最新修订）。
+架构：`linux/amd64`、`linux/arm64`，`docker pull` 会按当前机器自动选择。
 
 ## 一条命令跑起来
 
@@ -11,7 +18,7 @@ docker run -d --name planeduel \
   -e PD_PUBLIC_PORT_ENABLED=1 \
   -v planeduel-data:/data \
   --restart unless-stopped \
-  laoknas/planeduel:latest
+  ghcr.io/kuai410022283/planeduel:latest
 ```
 
 打开 `http://<宿主机IP>:28082/` 即可开局；管理入口在 `http://127.0.0.1:18088/`。

@@ -20,6 +20,8 @@ concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: false
 
+# 官方镜像：ghcr.io/kuai410022283/planeduel（公开、可匿名拉取）
+# Docker Hub 为可选项：仓库里配了 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 才会同步推送
 env:
   GHCR_IMAGE: ghcr.io/kuai410022283/planeduel
   DOCKERHUB_IMAGE: laoknas/planeduel

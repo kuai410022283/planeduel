@@ -13,7 +13,7 @@ name: planeduel
 
 services:
   planeduel:
-    image: laoknas/planeduel:${PLANEDUEL_VERSION:-latest}
+    image: ghcr.io/kuai410022283/planeduel:${PLANEDUEL_VERSION:-latest}
     container_name: planeduel
     restart: unless-stopped
     init: true
