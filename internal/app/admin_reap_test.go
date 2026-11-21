@@ -147,6 +147,7 @@ func TestHubTokenBusy(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	if !h.TokenBusy("tok-a") || !h.TokenBusy("tok-b") {
 		t.Fatal("开局后双方都应算 busy")

@@ -189,6 +189,7 @@ function handleWS(msg) {
       state.room = msg.room;
       state.solo = null;
       $('invite-modal').hidden = true;
+      if (msg.room && msg.room.state === 'placing') adoptPlacing(msg.room);
       render();
       break;
     case 'spectate':
@@ -331,12 +332,21 @@ function renderSpectate(s) {
 }
 
 function renderDuel(r) {
+  if (r.state === 'placing') {
+    renderPlacing(r);
+    return;
+  }
+  $('placing-bar').hidden = true;
+  const planes = (r.my_planes || []).map((p) => ({
+    cells: p.cells || [], head: p.head, alive: p.alive !== false,
+  }));
   const mine = new Set(r.my_cells || []);
   const myMarks = new Map((r.my_marks || []).map((m) => [m.cell, m.fb]));
   const enemyMarks = new Map((r.enemy_marks || []).map((m) => [m.cell, m.fb]));
   const live = r.state === 'playing' && r.turn === r.me;
 
-  paintBoard($('board-mine'), mine, myMarks, false);
+  paintPlanes($('board-mine'), planes, myMarks, false, -1);
+  $('board-mine').classList.remove('editing');
   paintBoard($('board-enemy'), null, enemyMarks, live);
 
   setTitles(`${r.names[r.me] || '我'} 的布阵`, `${r.names[1 - r.me] || '对手'} 的敌情`);
@@ -387,6 +397,27 @@ function applyDuelStatus(r) {
     leave: '对手主动离开',
   };
 
+  if (r.state === 'placing') {
+    $('duel-rematch').hidden = true;
+    const pl = placeLeftSeconds(r);
+    const leftTxt2 = pl === null ? '' : `（剩余 ${fmtLeft(pl)}）`;
+    if (PLACE.ready) {
+      st.textContent = `已锁定，等待对手开始${leftTxt2}`;
+      st.className = 'status wait';
+      setTurnbar('布阵已锁定', `等待 ${opp} 开始`, 'theirs');
+    } else {
+      st.textContent = `布阵中：已放 ${PLACE.ships.length} / 3${leftTxt2}`;
+      st.className = 'status';
+      setTurnbar('布阵阶段', `已放 ${PLACE.ships.length} / 3`, 'mine');
+    }
+    const chip0 = $('duel-timer');
+    if (chip0) {
+      chip0.textContent = pl === null ? '' : `剩余 ${fmtLeft(pl)}`;
+      chip0.className = 'tb-timer' + (pl !== null && pl <= 20 ? ' warn' : '');
+    }
+    $('duel-code').textContent = r.code || '—';
+    return;
+  }
   if (r.state === 'waiting') {
     $('duel-rematch').hidden = true;
     st.textContent = '等待对手加入…';
@@ -439,7 +470,8 @@ function renderSolo() {
   const enemyMarks = new Map((v ? v.enemy_marks : []).map((m) => [m.cell, m.fb]));
   const live = !!v && !v.finished;
 
-  paintBoard($('board-mine'), mine, myMarks, false);
+  paintPlanes($('board-mine'), planes, myMarks, false, -1);
+  $('board-mine').classList.remove('editing');
   paintBoard($('board-enemy'), null, enemyMarks, live);
 
   const stats = $('stats');
@@ -822,6 +854,339 @@ function renderPort(s) {
   n.textContent = `监听失败：${s.status.error}`;
   n.className = 'hint err';
 }
+
+
+// ---------------------------------------------------------------- 布阵编辑
+// 与 game/shape.go 一致的 1513 机型：第 0 个偏移是机头。
+const SHAPE_BASE = [[0, 2], [1, 0], [1, 1], [1, 2], [1, 3], [1, 4], [2, 2], [3, 1], [3, 2], [3, 3]];
+const ORIENT_NAME = ['朝上', '朝右', '朝下', '朝左'];
+
+// 布阵编辑状态（本地草稿；服务端是最终权威）
+const PLACE = {
+  ships: [],      // [{row, col, orient}]
+  orient: 0,      // 下一个/正在拖动的朝向
+  grab: null,     // 正在拖动的已有飞机 {ship, index}（新放的为 null）
+  drag: false,    // 是否处于「拖动/待放置」过程中
+  selected: -1,   // 当前选中的飞机序号
+  hover: null,    // 拖动时鼠标所在的机头格
+  ready: false,   // 已按「开始」（锁定）
+};
+
+function shapeOutline(orient) {
+  let pts = SHAPE_BASE.map(([r, c]) => [r, c]);
+  let h = 4;
+  const n = ((orient % 4) + 4) % 4;
+  for (let k = 0; k < n; k++) {
+    pts = pts.map(([r, c]) => [c, h - 1 - r]);
+    h = 9 - h;
+  }
+  return pts;
+}
+
+function shipCells(ship) {
+  return shapeOutline(ship.orient).map(([dr, dc]) => ({ row: ship.row + dr, col: ship.col + dc }));
+}
+
+function headCellOf(ship) {
+  const p = shapeOutline(ship.orient)[0];
+  return { row: ship.row + p[0], col: ship.col + p[1] };
+}
+
+// 以「机头所在格」反推布阵原点
+function shipFromHead(headRow, headCol, orient) {
+  const p = shapeOutline(orient)[0];
+  return { row: headRow - p[0], col: headCol - p[1], orient };
+}
+
+function cellNameOf(row, col) { return ROWS[row] + (col + 1); }
+function cellPosOf(name) { return { row: ROWS.indexOf(name[0]), col: Number(name.slice(1)) - 1 }; }
+function inBoard(c) { return c.row >= 0 && c.row < 10 && c.col >= 0 && c.col < 10; }
+
+function placingActive(r) { return !!r && r.state === 'placing'; }
+function placingEditable(r) { return placingActive(r) && !PLACE.ready; }
+
+// adoptPlacing 用服务端的布阵刷新本地草稿（进入布阵、重连、随机/清除的回显）
+function adoptPlacing(r) {
+  PLACE.ready = !!r.my_ready;
+  if (PLACE.drag) return; // 正在拖动时不要打断
+  PLACE.ships = (r.placed || []).map((p) => ({ row: p.row, col: p.col, orient: p.orient }));
+  if (PLACE.selected >= PLACE.ships.length) PLACE.selected = -1;
+}
+
+function placingPlanes() {
+  return PLACE.ships.map((s) => {
+    const cells = shipCells(s).filter(inBoard).map((c) => cellNameOf(c.row, c.col));
+    const h = headCellOf(s);
+    return { cells, head: cellNameOf(h.row, h.col), alive: true };
+  });
+}
+
+// placementValid 判断这份布阵是否能放下（不越界、不与其它飞机重叠）
+function placementValid(ship, ignoreIndex) {
+  const occ = new Set();
+  PLACE.ships.forEach((s, i) => {
+    if (i === ignoreIndex) return;
+    shipCells(s).forEach((c) => { if (inBoard(c)) occ.add(cellNameOf(c.row, c.col)); });
+  });
+  return shipCells(ship).every((c) => inBoard(c) && !occ.has(cellNameOf(c.row, c.col)));
+}
+
+function shipIndexAt(pos) {
+  return PLACE.ships.findIndex((s) =>
+    shipCells(s).some((c) => c.row === pos.row && c.col === pos.col));
+}
+
+function syncPlacingSend() {
+  send({
+    t: 'placing.set',
+    placements: PLACE.ships.map((s) => ({ row: s.row, col: s.col, orient: s.orient })),
+  });
+}
+
+function paintPreview(node, cells, ok) {
+  for (const cell of node.children) {
+    if (cell.classList && cell.classList.contains('cell')) cell.classList.remove('preview-ok', 'preview-bad');
+  }
+  for (const c of cells) {
+    if (!inBoard(c)) continue;
+    const el = node.querySelector(`.cell[data-cell="${cellNameOf(c.row, c.col)}"]`);
+    if (el) el.classList.add(ok ? 'preview-ok' : 'preview-bad');
+  }
+}
+
+// paintPlanes 按「每架飞机」上色：p0 / p1 / p2 三种颜色，机头画圆点。
+function paintPlanes(node, planes, marks, editing, selected) {
+  node.classList.toggle('editing', !!editing);
+  const owner = new Map();
+  planes.forEach((p, i) => (p.cells || []).forEach((name) => owner.set(name, i)));
+  for (const cell of node.children) {
+    if (!cell.classList || !cell.classList.contains('cell')) continue;
+    const name = cell.dataset.cell;
+    cell.className = 'cell';
+    const i = owner.get(name);
+    if (i !== undefined) {
+      cell.classList.add('p' + Math.min(i, 2));
+      if (planes[i].head === name) cell.classList.add('head');
+      if (editing && i === selected) cell.classList.add('sel');
+      if (planes[i].alive === false) cell.classList.add('lost');
+    }
+    const fb = marks && marks.get(name);
+    if (fb === '空') cell.classList.add('miss', 'shot');
+    else if (fb === '中') cell.classList.add('hit', 'shot');
+    else if (fb === '死') cell.classList.add('kill', 'shot');
+  }
+}
+
+// setHint 写布阵提示（保持 .hint 样式，不用 setMsg 的 .msg 类）
+function setHint(text, kind) {
+  const n = $('placing-hint');
+  if (!n) return;
+  n.textContent = text || '';
+  n.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+function placeLeftSeconds(r) {
+  if (!r || r.state !== 'placing' || !r.place_deadline_ms) return null;
+  return Math.max(0, Math.round((r.place_deadline_ms - Date.now()) / 1000));
+}
+
+function renderPlacing(r) {
+  const editable = placingEditable(r);
+  paintPlanes($('board-mine'), placingPlanes(), new Map(), editable, PLACE.selected);
+  paintBoard($('board-enemy'), null, new Map(), false);
+
+  setTitles(`${r.names[r.me] || '我'} 的布阵`, `${r.names[1 - r.me] || '对手'} 的敌情`);
+  applyDuelStatus(r);
+  $('duel-code').textContent = r.code || '—';
+  $('stats').hidden = true;
+  $('log').textContent = r.opp_ready && !PLACE.ready
+    ? '对手已布好并锁定，就等你了'
+    : '';
+  if (r.turn_sec) $('duel-timer').dataset.limit = String(r.turn_sec);
+
+  // 工具条
+  const bar = $('placing-bar');
+  bar.hidden = false;
+  $('placing-count').textContent = `已放 ${PLACE.ships.length} / 3`;
+  $('place-start').hidden = PLACE.ready;
+  $('place-start').disabled = PLACE.ships.length !== 3;
+  $('place-unready').hidden = !PLACE.ready;
+  for (const id of ['place-rotate', 'place-random', 'place-clear']) $(id).disabled = !editable;
+  const hint = $('placing-hint');
+  if (PLACE.ready) {
+    setHint('布阵已锁定。要重新调整就先点「取消开始」。', 'warn');
+  } else if (PLACE.drag) {
+    setHint(`拖动中：${ORIENT_NAME[PLACE.orient]}，松开落位`, '');
+  } else {
+    setHint('点棋盘放飞机：点哪格，机头就朝哪格；按住已放好的飞机可以拖动，双击删除。', '');
+  }
+
+  // 拖动预览
+  if (PLACE.drag && PLACE.hover) {
+    const ship = shipFromHead(PLACE.hover.row, PLACE.hover.col, PLACE.orient);
+    paintPreview($('board-mine'), shipCells(ship), placementValid(ship, -1));
+  }
+}
+
+// ---------------------------------------------------------------- 布阵交互
+function placeBoardEl() { return $('board-mine'); }
+
+function cellFromEvent(e) {
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  if (!el || !el.classList || !el.classList.contains('cell')) return null;
+  return cellPosOf(el.dataset.cell);
+}
+
+function onPlaceDown(e) {
+  if (!placingEditable(state.room)) return;
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains('cell')) return;
+  const pos = cellPosOf(t.dataset.cell);
+  const idx = shipIndexAt(pos);
+  PLACE.drag = true;
+  PLACE.grab = idx >= 0 ? { ship: PLACE.ships[idx], index: idx } : null;
+  PLACE.orient = idx >= 0 ? PLACE.ships[idx].orient : PLACE.orient;
+  PLACE.hover = idx >= 0 ? headCellOf(PLACE.ships[idx]) : pos;
+  PLACE.selected = idx;
+  if (idx >= 0) PLACE.ships.splice(idx, 1); // 抓起：从棋盘上摘下来，用预览跟随
+  const b = placeBoardEl();
+  if (b.setPointerCapture && e.pointerId !== undefined) {
+    try { b.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
+  }
+  render();
+  e.preventDefault();
+}
+
+function onPlaceMove(e) {
+  if (!PLACE.drag) return;
+  const pos = cellFromEvent(e);
+  if (!pos) return;
+  PLACE.hover = pos;
+  render();
+  e.preventDefault();
+}
+
+function onPlaceUp(e) {
+  if (!PLACE.drag) return;
+  const pos = cellFromEvent(e) || PLACE.hover;
+  const back = PLACE.grab; // 拖动已有飞机时非 null；新放飞机时为 null
+  PLACE.drag = false;
+  PLACE.grab = null;
+  let ship = null;
+  if (pos) {
+    const cand = shipFromHead(pos.row, pos.col, PLACE.orient);
+    if (placementValid(cand, -1)) ship = cand;
+  }
+  if (ship) {
+    if (back) {
+      PLACE.ships.splice(back.index, 0, ship);
+      PLACE.selected = back.index;
+    } else {
+      PLACE.ships.push(ship);
+      PLACE.selected = PLACE.ships.length - 1;
+    }
+    syncPlacingSend();
+  } else if (back) {
+    PLACE.ships.splice(back.index, 0, back.ship); // 放不下就回原位
+    PLACE.selected = back.index;
+  }
+  PLACE.hover = null;
+  render();
+  e.preventDefault();
+}
+
+function onPlaceCancel() {
+  if (!PLACE.drag) return;
+  const back = PLACE.grab;
+  PLACE.drag = false;
+  PLACE.grab = null;
+  PLACE.hover = null;
+  if (back) PLACE.ships.splice(back.index, 0, back.ship);
+  render();
+}
+
+function onPlaceDblClick(e) {
+  if (!placingEditable(state.room)) return;
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains('cell')) return;
+  const idx = shipIndexAt(cellPosOf(t.dataset.cell));
+  if (idx < 0) return;
+  PLACE.ships.splice(idx, 1);
+  PLACE.selected = -1;
+  syncPlacingSend();
+  render();
+  e.preventDefault();
+}
+
+$('board-mine').addEventListener('pointerdown', onPlaceDown);
+$('board-mine').addEventListener('pointermove', onPlaceMove);
+$('board-mine').addEventListener('pointerup', onPlaceUp);
+$('board-mine').addEventListener('pointercancel', onPlaceCancel);
+$('board-mine').addEventListener('dblclick', onPlaceDblClick);
+$('board-mine').addEventListener('contextmenu', (e) => { if (placingActive(state.room)) e.preventDefault(); });
+
+$('place-rotate').addEventListener('click', () => {
+  if (!placingEditable(state.room)) return;
+  if (PLACE.drag) {
+    PLACE.orient = (PLACE.orient + 1) % 4;
+    render();
+    return;
+  }
+  const i = PLACE.selected;
+  if (i >= 0 && PLACE.ships[i]) {
+    const head = headCellOf(PLACE.ships[i]);
+    const o = (PLACE.ships[i].orient + 1) % 4;
+    const ship = shipFromHead(head.row, head.col, o);
+    if (placementValid(ship, i)) {
+      PLACE.ships[i] = ship;
+      syncPlacingSend();
+      setHint(`${i + 1} 号机已转为${ORIENT_NAME[o]}`, '');
+    } else {
+      setHint('这个位置转不开，先挪一下再旋转', 'err');
+    }
+    render();
+    return;
+  }
+  PLACE.orient = (PLACE.orient + 1) % 4;
+  setHint(`下一个朝向：${ORIENT_NAME[PLACE.orient]}`, '');
+  render();
+});
+
+$('place-random').addEventListener('click', () => {
+  if (!placingEditable(state.room)) return;
+  PLACE.selected = -1;
+  PLACE.grab = null;
+  PLACE.drag = false;
+  send({ t: 'placing.rand' });
+});
+
+$('place-clear').addEventListener('click', () => {
+  if (!placingEditable(state.room)) return;
+  PLACE.ships = [];
+  PLACE.selected = -1;
+  PLACE.grab = null;
+  PLACE.drag = false;
+  PLACE.orient = 0;
+  syncPlacingSend();
+  render();
+});
+
+$('place-start').addEventListener('click', () => {
+  if (!placingEditable(state.room)) return;
+  if (PLACE.ships.length !== 3) {
+    setHint('先把 3 架飞机都放好', 'err');
+    return;
+  }
+  PLACE.grab = null;
+  PLACE.drag = false;
+  PLACE.selected = -1;
+  send({ t: 'placing.ready', ready: true });
+});
+
+$('place-unready').addEventListener('click', () => {
+  if (!placingActive(state.room) || !PLACE.ready) return;
+  send({ t: 'placing.ready', ready: false });
+});
 
 // ---------------------------------------------------------------- 启动
 buildBoard($('board-mine'), false);

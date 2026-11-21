@@ -38,8 +38,13 @@ func TestRoomCodeLengthAndJoinCaseInsensitive(t *testing.T) {
 	if !ok {
 		t.Fatal("加入后应收到房间状态")
 	}
-	if asRoom(t, rmB).State != "playing" {
-		t.Fatalf("加入后应直接开局，实际 %q", asRoom(t, rmB).State)
+	if asRoom(t, rmB).State != "placing" {
+		t.Fatalf("加入后应进入布阵阶段，实际 %q", asRoom(t, rmB).State)
+	}
+	beginPlaying(t, h, a, b)
+	rmB2, _ := capB.lastOf("room")
+	if asRoom(t, rmB2).State != "playing" {
+		t.Fatalf("双方就绪后应开局，实际 %q", asRoom(t, rmB2).State)
 	}
 }
 

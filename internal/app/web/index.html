@@ -107,6 +107,23 @@
           <button id="duel-copy" class="btn-sm" title="复制房间码">复制</button>
         </div>
 
+        <div class="placing-bar" id="placing-bar" hidden>
+          <div class="legend">
+            <span><i class="lg-p0"></i>1 号机</span>
+            <span><i class="lg-p1"></i>2 号机</span>
+            <span><i class="lg-p2"></i>3 号机</span>
+            <span class="count" id="placing-count">已放 0 / 3</span>
+          </div>
+          <div class="placing-actions">
+            <button id="place-rotate" class="btn-sm">↻ 旋转</button>
+            <button id="place-random" class="btn-sm">随机布阵</button>
+            <button id="place-clear" class="btn-sm">清除</button>
+            <button id="place-start" class="primary">开始</button>
+            <button id="place-unready" class="btn-sm" hidden>取消开始</button>
+          </div>
+          <p class="hint" id="placing-hint">点棋盘放飞机：点哪格，机头就朝哪格；按住已放好的飞机可以拖动，双击删除。</p>
+        </div>
+
         <button id="duel-rematch" class="primary wide" hidden>再来一局</button>
         <button id="duel-leave" class="ghost wide">离开房间</button>
       </div>

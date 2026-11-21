@@ -94,16 +94,32 @@ func TestInviteAcceptStartsRoom(t *testing.T) {
 	}
 	ra := asRoom(t, rmA)
 	rb := asRoom(t, rmB)
-	if ra.State != "playing" || rb.State != "playing" {
-		t.Fatalf("应直接开局：%s / %s", ra.State, rb.State)
+	if ra.State != "placing" || rb.State != "placing" {
+		t.Fatalf("接受邀请后应进入布阵阶段：%s / %s", ra.State, rb.State)
 	}
 	if ra.Me == rb.Me {
 		t.Fatal("双方视角编号不应相同")
 	}
-	if len(ra.MyCells) != 30 || len(rb.MyCells) != 30 {
-		t.Fatalf("每人应有 30 格布阵：%d / %d", len(ra.MyCells), len(rb.MyCells))
+	if len(ra.MyCells) != 0 || len(rb.MyCells) != 0 {
+		t.Fatalf("布阵阶段应是空棋盘：%d / %d", len(ra.MyCells), len(rb.MyCells))
 	}
 	if len(ra.EnemyMarks) != 0 {
+		t.Fatal("布阵阶段敌情图应为空")
+	}
+
+	// 双方都摆好并按下开始 → 进入对局
+	beginPlaying(t, h, a, b)
+	rmA2, _ := capA.lastOf("room")
+	rmB2, _ := capB.lastOf("room")
+	va := asRoom(t, rmA2)
+	vb := asRoom(t, rmB2)
+	if va.State != "playing" || vb.State != "playing" {
+		t.Fatalf("双方就绪后应开局：%s / %s", va.State, vb.State)
+	}
+	if len(va.MyCells) != 30 || len(vb.MyCells) != 30 {
+		t.Fatalf("每人应有 30 格布阵：%d / %d", len(va.MyCells), len(vb.MyCells))
+	}
+	if len(va.EnemyMarks) != 0 {
 		t.Fatal("开局时敌情图应为空")
 	}
 }
@@ -132,6 +148,7 @@ func TestPlayFullMatch(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	seq := func() []string {
 		out := make([]string, 0, 100)
@@ -187,6 +204,7 @@ func TestOutOfTurnRejected(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	// 先确认当前是谁的回合（先手是甲）
 	doSend(h, b, map[string]any{"t": "shot", "cell": "A1"})
@@ -221,8 +239,13 @@ func TestCreateAndJoinByCode(t *testing.T) {
 	if !ok {
 		t.Fatal("加入后应收到房间状态")
 	}
-	if asRoom(t, rmB).State != "playing" {
-		t.Fatal("加入后应直接开局")
+	if asRoom(t, rmB).State != "placing" {
+		t.Fatal("加入后应进入布阵阶段")
+	}
+	beginPlaying(t, h, a, b)
+	rmB2, _ := capB.lastOf("room")
+	if asRoom(t, rmB2).State != "playing" {
+		t.Fatal("双方就绪后应开局")
 	}
 }
 

@@ -17,6 +17,7 @@ func TestReconnectKeepsGameAlive(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	room := a.room
 	if room == nil {
@@ -66,6 +67,7 @@ func TestDifferentTokenCannotStealSeat(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	room := a.room
 
 	other := &Client{Nick: "甲", Token: "someone-else", send: func([]byte) error { return nil }, kill: func() {}}
@@ -85,6 +87,7 @@ func TestOfflineGraceThenForfeit(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	room := a.room
 
 	h.mu.Lock()
@@ -122,6 +125,7 @@ func TestTimeoutCarriesReason(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	room := a.room
 
 	room.mu.Lock()
@@ -163,6 +167,7 @@ func TestTurnLimitConfigurableAndResets(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙", "turn_sec": 180})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	room := a.room
 	room.mu.Lock()
@@ -209,6 +214,7 @@ func TestDefaultTurnLimitIsFiveMinutes(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	room := a.room
 	room.mu.Lock()
@@ -228,6 +234,7 @@ func TestDefaultRuleAlternatesEveryShot(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	room := a.room
 	room.mu.Lock()
@@ -270,6 +277,7 @@ func TestContinueOnHitOption(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙", "continue_on_hit": true})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	room := a.room
 	room.mu.Lock()
@@ -291,6 +299,7 @@ func TestInviteAgainAfterGameEnds(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	room := a.room
 
 	// 把这一局打完
@@ -340,6 +349,7 @@ func TestInviteAgainAfterGameEnds(t *testing.T) {
 		t.Fatal("上一局结束后应能再次邀请")
 	}
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv2["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 
 	// 应重新开局
 	got, ok := capA.lastOf("room")
@@ -369,6 +379,7 @@ func TestReconnectDoesNotResumeFinishedRoom(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	room := a.room
 
 	// 把这一局打完

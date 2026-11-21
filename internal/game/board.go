@@ -254,3 +254,27 @@ func BuildFrom(r Rules, ps []Placement) (*Board, error) {
 	}
 	return b, nil
 }
+
+// RandomPlacements 生成一份合法的随机布阵（服务端「随机布阵」按钮用）。
+func RandomPlacements(r Rules, rng *rand.Rand) ([]Placement, error) {
+	b := NewBoard(r)
+	if err := b.Randomize(rng); err != nil {
+		return nil, err
+	}
+	return b.Placements(), nil
+}
+// ValidatePlacements 校验一份「可能还没摆完」的布阵：
+// 每一架都必须合法（不越界/不重叠/不违反相邻规则），但不要求摆满。
+// 布阵阶段玩家每摆一架就同步一次，所以必须允许部分布阵。
+func ValidatePlacements(r Rules, ps []Placement) error {
+	if len(ps) > r.Planes {
+		return ErrTooMany
+	}
+	b := NewBoard(r)
+	for _, p := range ps {
+		if err := b.Place(p.Row, p.Col, p.Orient); err != nil {
+			return err
+		}
+	}
+	return nil
+}

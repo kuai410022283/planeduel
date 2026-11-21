@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -16,6 +17,7 @@ import (
 const (
 	inviteTTL    = 20 * time.Second
 	offlineGrace = 120 * time.Second // 掉线后 2 分钟内回来都算继续
+	placeWindow  = 120 * time.Second // 布阵阶段时限，超时自动随机
 
 	defaultTurnSec = 300 // 默认每回合 5 分钟
 	minTurnSec     = 60
@@ -59,7 +61,10 @@ type Room struct {
 	goneAt   [2]time.Time
 	m         *game.Match
 	turnLimit time.Duration // 每回合时限（3 或 5 分钟），每次换手重新计时
-	state     string        // waiting / playing / done
+	state     string        // waiting / placing / playing / done
+	placed        [2][]game.Placement // 每方已确认的布阵（服务端权威）
+	ready         [2]bool             // 每方是否已按「开始」（按下后布阵锁定）
+	placeDeadline time.Time           // 布阵阶段倒计时
 	winner    int
 	endReason string // win / timeout / offline / leave
 	deadline  time.Time
@@ -180,7 +185,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 func (r *Room) bind(c *Client) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.state != "playing" {
+	if r.state != "playing" && r.state != "placing" {
 		return false
 	}
 	for i := 0; i < 2; i++ {
@@ -270,6 +275,8 @@ func (h *Hub) handle(c *Client, data []byte) {
 		Accept bool   `json:"accept"`
 		TurnSec int   `json:"turn_sec"`
 		Continue *bool `json:"continue_on_hit"`
+		Placements []game.Placement `json:"placements"`
+		Ready      bool             `json:"ready"`
 	}
 	if err := json.Unmarshal(data, &in); err != nil {
 		h.sendErr(c, "消息格式不对")
@@ -292,6 +299,12 @@ func (h *Hub) handle(c *Client, data []byte) {
 		h.doLeave(c)
 	case "shot":
 		h.doShot(c, in.Cell)
+	case "placing.set":
+		h.doPlacingSet(c, in.Placements)
+	case "placing.ready":
+		h.doPlacingReady(c, in.Ready)
+	case "placing.rand":
+		h.doPlacingRand(c)
 	}
 }
 
@@ -315,9 +328,9 @@ func (h *Hub) freeIfDoneLocked(c *Client) {
 		return
 	}
 	r.mu.Lock()
-	if r.state == "playing" {
+	if r.state == "playing" || r.state == "placing" {
 		r.mu.Unlock()
-		return // 正在打，绝不释放
+		return // 正在打或正在布阵，绝不释放
 	}
 	for i := 0; i < 2; i++ {
 		if r.clients[i] == c {
@@ -400,7 +413,7 @@ func (h *Hub) doInviteReply(c *Client, id string, accept bool) {
 	r.Rules.ContinueOnHit = inv.ContinueOnHit
 	h.mu.Unlock()
 
-	h.startMatch(r)
+	h.beginPlacing(r)
 }
 
 func (h *Hub) doCreate(c *Client, turnSec int, cont *bool) {
@@ -456,7 +469,7 @@ func (h *Hub) doJoin(c *Client, code string) {
 		return
 	}
 	c.room = room
-	h.startMatch(room)
+	h.beginPlacing(room)
 }
 
 func (h *Hub) doLeave(c *Client) {
@@ -487,7 +500,7 @@ func (h *Hub) doLeave(c *Client) {
 			}
 		}
 		if idx >= 0 {
-			if r.state == "playing" {
+			if r.state == "playing" || r.state == "placing" {
 				r.state = "done"
 				r.winner = 1 - idx // 主动退出算认输
 				r.endReason = "leave"
@@ -600,35 +613,221 @@ func (h *Hub) newRoomLocked(a, b *Client) *Room {
 	return r
 }
 
+// beginPlacing 两人就位后进入布阵阶段：棋盘默认空白，飞机由玩家自己摆。
+func (h *Hub) beginPlacing(r *Room) {
+	r.mu.Lock()
+	if r.clients[0] == nil || r.clients[1] == nil {
+		r.mu.Unlock()
+		return
+	}
+	r.state = "placing"
+	r.placed[0], r.placed[1] = nil, nil
+	r.ready[0], r.ready[1] = false, false
+	r.m = nil
+	r.winner = -1
+	r.endReason = ""
+	r.deadline = time.Time{}
+	r.placeDeadline = time.Now().Add(placeWindow)
+	c0, c1 := r.clients[0], r.clients[1]
+	r.mu.Unlock()
+
+	h.sendRoom(r, c0)
+	h.sendRoom(r, c1)
+	h.broadcastSpectate(r)
+	h.broadcastPlayers()
+}
+
+// seatOf 返回该连接在房间里的座位号（不在房间里返回 -1）。调用方需持有 r.mu。
+func seatOf(r *Room, c *Client) int {
+	for i := 0; i < 2; i++ {
+		if r.clients[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// doPlacingSet 接收整份布阵（幂等）。按下「开始」后布阵锁定，这里会拒绝修改。
+func (h *Hub) doPlacingSet(c *Client, ps []game.Placement) {
+	r := c.room
+	if r == nil {
+		h.sendErr(c, "你还没有进入房间")
+		return
+	}
+	r.mu.Lock()
+	me := seatOf(r, c)
+	if me < 0 {
+		r.mu.Unlock()
+		h.sendErr(c, "你不在这个房间里")
+		return
+	}
+	if r.state != "placing" {
+		r.mu.Unlock()
+		h.sendErr(c, "现在不是布阵阶段")
+		return
+	}
+	if r.ready[me] {
+		r.mu.Unlock()
+		h.sendErr(c, "布阵已锁定，不能再修改")
+		return
+	}
+	// 服务端复算校验：既防作弊，也防前端算错。
+	// 允许「还没摆完」（玩家点一架就同步一次），只校验已摆的那几架。
+	if err := game.ValidatePlacements(r.Rules, ps); err != nil {
+		r.mu.Unlock()
+		h.sendErr(c, err.Error())
+		h.sendRoom(r, c)
+		return
+	}
+	r.placed[me] = ps
+	r.mu.Unlock()
+	h.sendRoom(r, c)
+}
+
+// doPlacingReady 按「开始」：本局布阵锁定；双方都按下后开局。
+func (h *Hub) doPlacingReady(c *Client, ready bool) {
+	r := c.room
+	if r == nil {
+		h.sendErr(c, "你还没有进入房间")
+		return
+	}
+	r.mu.Lock()
+	me := seatOf(r, c)
+	if me < 0 {
+		r.mu.Unlock()
+		h.sendErr(c, "你不在这个房间里")
+		return
+	}
+	if r.state != "placing" {
+		r.mu.Unlock()
+		h.sendErr(c, "现在不是布阵阶段")
+		return
+	}
+	if ready && len(r.placed[me]) != r.Rules.Planes {
+		r.mu.Unlock()
+		h.sendErr(c, fmt.Sprintf("先把 %d 架飞机都放好", r.Rules.Planes))
+		return
+	}
+	r.ready[me] = ready
+	both := r.ready[0] && r.ready[1]
+	c0, c1 := r.clients[0], r.clients[1]
+	r.mu.Unlock()
+
+	h.sendRoom(r, c0)
+	h.sendRoom(r, c1)
+	if both {
+		h.startMatch(r)
+	}
+}
+
+// doPlacingRand 由服务端生成一份随机布阵（与原来开局随机同一套算法）。
+func (h *Hub) doPlacingRand(c *Client) {
+	r := c.room
+	if r == nil {
+		h.sendErr(c, "你还没有进入房间")
+		return
+	}
+	r.mu.Lock()
+	me := seatOf(r, c)
+	if me < 0 {
+		r.mu.Unlock()
+		h.sendErr(c, "你不在这个房间里")
+		return
+	}
+	if r.state != "placing" {
+		r.mu.Unlock()
+		h.sendErr(c, "现在不是布阵阶段")
+		return
+	}
+	if r.ready[me] {
+		r.mu.Unlock()
+		h.sendErr(c, "布阵已锁定，不能再修改")
+		return
+	}
+	ps, err := game.RandomPlacements(r.Rules, h.rng)
+	if err != nil {
+		r.mu.Unlock()
+		h.sendErr(c, err.Error())
+		return
+	}
+	r.placed[me] = ps
+	r.mu.Unlock()
+	h.sendRoom(r, c)
+}
+
+// planeView 是单架飞机在视图里的形态：格子列表 + 机头，前端按序号上色。
+type planeView struct {
+	Cells []string `json:"cells"`
+	Head  string   `json:"head"`
+	Alive bool     `json:"alive"`
+}
+
+func planeViews(ps []game.Placement, alive []bool) []planeView {
+	out := make([]planeView, 0, len(ps))
+	for i, p := range ps {
+		cells, err := game.Cells(p.Row, p.Col, p.Orient)
+		if err != nil {
+			continue
+		}
+		pv := planeView{Cells: make([]string, 0, len(cells)), Alive: true}
+		for _, cell := range cells {
+			pv.Cells = append(pv.Cells, cell.Name())
+		}
+		pv.Head = cells[0].Name()
+		if i < len(alive) {
+			pv.Alive = alive[i]
+		}
+		out = append(out, pv)
+	}
+	return out
+}
+
 func (h *Hub) startMatch(r *Room) {
 	r.mu.Lock()
 	if r.clients[0] == nil || r.clients[1] == nil {
 		r.mu.Unlock()
 		return
 	}
-	b0, b1 := game.NewBoard(r.Rules), game.NewBoard(r.Rules)
-	err0 := b0.Randomize(h.rng)
-	err1 := b1.Randomize(h.rng)
-
+	var boards [2]*game.Board
 	var err error
-	if err0 == nil && err1 == nil {
-		var m *game.Match
-		m, err = game.NewMatch(r.Rules, b0, b1, 0)
-		if err == nil {
-			r.m = m
-			r.state = "playing"
-			r.deadline = time.Now().Add(r.turnLimit) // 开局计时
+	for i := 0; i < 2; i++ {
+		if len(r.placed[i]) == 0 {
+			// 超时没布阵的，服务端补一份随机，保证一定能开局
+			var ps []game.Placement
+			if ps, err = game.RandomPlacements(r.Rules, h.rng); err != nil {
+				break
+			}
+			r.placed[i] = ps
 		}
+		if boards[i], err = game.BuildFrom(r.Rules, r.placed[i]); err != nil {
+			break
+		}
+	}
+	var m *game.Match
+	if err == nil {
+		m, err = game.NewMatch(r.Rules, boards[0], boards[1], 0)
+	}
+	if err == nil {
+		r.m = m
+		r.state = "playing"
+		r.placeDeadline = time.Time{}
+		r.deadline = time.Now().Add(r.turnLimit) // 开局计时
 	}
 	c0, c1 := r.clients[0], r.clients[1]
 	r.mu.Unlock()
 
-	if err0 != nil || err1 != nil || err != nil {
+	if err != nil {
+		// 兜底：布阵是校验过的，正常不会到这里；万一失败就解锁让玩家重摆
+		r.mu.Lock()
+		r.ready[0], r.ready[1] = false, false
+		r.mu.Unlock()
 		if c0 != nil {
-			h.sendErr(c0, "开局失败，请重试")
+			h.sendErr(c0, "开局失败："+err.Error())
+			h.sendRoom(r, c0)
 		}
 		if c1 != nil {
-			h.sendErr(c1, "开局失败，请重试")
+			h.sendErr(c1, "开局失败："+err.Error())
+			h.sendRoom(r, c1)
 		}
 		return
 	}
@@ -656,6 +855,13 @@ type roomView struct {
 	Reason     string      `json:"reason,omitempty"`
 	TurnSec    int         `json:"turn_sec"`
 	ContinueOnHit bool     `json:"continue_on_hit"`
+
+	// 布阵阶段
+	Placed          []game.Placement `json:"placed,omitempty"`            // 自己当前布阵
+	MyPlanes        []planeView      `json:"my_planes,omitempty"`         // 每架飞机的格子（上色用）
+	MyReady         bool             `json:"my_ready"`                    // 自己是否已按「开始」（锁定）
+	OppReady        bool             `json:"opp_ready"`                   // 对手是否已按「开始」
+	PlaceDeadlineMS int64            `json:"place_deadline_ms,omitempty"` // 布阵倒计时
 }
 
 func (h *Hub) sendRoom(r *Room, c *Client) {
@@ -678,20 +884,34 @@ func (h *Hub) sendRoom(r *Room, c *Client) {
 		Turn: -1, Winner: r.winner, Reason: r.endReason, TurnSec: int(r.turnLimit / time.Second),
 		ContinueOnHit: r.Rules.ContinueOnHit,
 		MyCells: []string{}, MyMarks: []mark{}, EnemyMarks: []mark{},
+		Placed: r.placed[me], MyReady: r.ready[me], OppReady: r.ready[1-me],
 	}
 	if !r.deadline.IsZero() {
 		v.DeadlineMS = r.deadline.UnixMilli()
+	}
+	if r.state == "placing" && !r.placeDeadline.IsZero() {
+		v.PlaceDeadlineMS = r.placeDeadline.UnixMilli()
+	}
+	// 布阵阶段：按已确认的布阵展开每架飞机的格子（还没布阵就是空）
+	if r.m == nil {
+		v.MyPlanes = planeViews(r.placed[me], nil)
+		for _, p := range v.MyPlanes {
+			v.MyCells = append(v.MyCells, p.Cells...)
+		}
 	}
 	if r.m != nil {
 		v.Turn = r.m.Turn()
 		v.Finished = r.m.Finished()
 		v.Alive = [2]int{r.m.Alive(0), r.m.Alive(1)}
 		mine := r.m.Board(me)
+		alive := make([]bool, 0, mine.Count())
 		for i := 0; i < mine.Count(); i++ {
+			alive = append(alive, !mine.Plane(i).Dead())
 			for _, cell := range mine.Plane(i).Cells {
 				v.MyCells = append(v.MyCells, cell.Name())
 			}
 		}
+		v.MyPlanes = planeViews(r.placed[me], alive)
 		moves := r.m.Moves()
 		for _, mv := range moves {
 			mk := mark{Cell: mv.Cell.Name(), FB: mv.FB.String(), By: mv.By}
@@ -813,12 +1033,45 @@ func (h *Hub) Tick() {
 				reason = "timeout"
 			}
 		}
+		startNow := false
+		if r.state == "placing" {
+			// 1) 掉线超过宽限期 → 判负（和开局后一致）
+			for i := 0; i < 2; i++ {
+				if r.clients[i] == nil && !r.goneAt[i].IsZero() && now.Sub(r.goneAt[i]) > offlineGrace {
+					r.state = "done"
+					r.winner = 1 - i
+					r.endReason = "offline"
+					changed = true
+					reason = "offline"
+				}
+			}
+			// 2) 布阵超时：没按「开始」的一方自动随机布阵，避免房间卡死
+			if r.state == "placing" && !r.placeDeadline.IsZero() && now.After(r.placeDeadline) {
+				for i := 0; i < 2; i++ {
+					if r.ready[i] {
+						continue
+					}
+					if ps, err := game.RandomPlacements(r.Rules, h.rng); err == nil {
+						if len(r.placed[i]) == 0 {
+							r.placed[i] = ps
+						}
+						r.ready[i] = true
+					}
+				}
+				r.placeDeadline = time.Time{}
+				startNow = r.ready[0] && r.ready[1]
+			}
+		}
 		c0, c1 = r.clients[0], r.clients[1]
 		empty := c0 == nil && c1 == nil
 		dead := r.state == "done" && empty
 		winner := r.winner
 		r.mu.Unlock()
 
+		if startNow {
+			h.startMatch(r)
+			continue
+		}
 		if changed {
 			msg := map[string]any{"t": "timeout", "reason": reason, "winner": winner}
 			if c0 != nil {

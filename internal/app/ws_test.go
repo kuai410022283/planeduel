@@ -220,14 +220,31 @@ func TestWebSocketInviteFlow(t *testing.T) {
 
 	cb.sendText(t, []byte(fmt.Sprintf(`{"t":"invite.reply","id":%q,"accept":true}`, invID)))
 
-	// 双方都应收到 playing 状态
+	// 接受后先进入布阵阶段
 	ra := ca.waitFor(t, "room", 8)
 	rb := cb.waitFor(t, "room", 8)
-	if asRoom(t, rb).State != "playing" {
-		t.Fatal("乙那边也应看到已开局")
+	if asRoom(t, rb).State != "placing" {
+		t.Fatalf("乙那边应进入布阵阶段，实际 %s", asRoom(t, rb).State)
 	}
-	roomA := asRoom(t, ra)
-	if roomA.State != "playing" {
-		t.Fatalf("应已开局，实际 %s", roomA.State)
+	if asRoom(t, ra).State != "placing" {
+		t.Fatalf("甲那边应进入布阵阶段，实际 %s", asRoom(t, ra).State)
+	}
+
+	// 双方随机布阵并按下开始 → 真正开局
+	ca.sendText(t, []byte(`{"t":"placing.rand"}`))
+	ca.sendText(t, []byte(`{"t":"placing.ready","ready":true}`))
+	cb.sendText(t, []byte(`{"t":"placing.rand"}`))
+	cb.sendText(t, []byte(`{"t":"placing.ready","ready":true}`))
+
+	deadline := time.Now().Add(8 * time.Second)
+	var last roomView
+	for time.Now().Before(deadline) {
+		last = asRoom(t, ca.waitFor(t, "room", 2))
+		if last.State == "playing" {
+			break
+		}
+	}
+	if last.State != "playing" {
+		t.Fatalf("双方就绪后应开局，实际 %s", last.State)
 	}
 }

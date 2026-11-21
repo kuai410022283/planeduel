@@ -18,6 +18,7 @@ func TestSpectatorSeesOnlyPublicInfo(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	room := a.room
 	code := room.Code
 	_ = capA
@@ -68,6 +69,7 @@ func TestSpectatorRevealAfterGame(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	room := a.room
 
 	doSend(h, c, map[string]any{"t": "room.spectate", "code": room.Code})
@@ -151,6 +153,7 @@ func TestJoinFullRoomAutoSpectates(t *testing.T) {
 	doSend(h, a, map[string]any{"t": "invite", "to": "乙"})
 	inv, _ := capB.lastOf("invite")
 	doSend(h, b, map[string]any{"t": "invite.reply", "id": inv["id"].(string), "accept": true})
+	beginPlaying(t, h, a, b)
 	code := a.room.Code
 
 	// 第三人用「加入」而不是「旁观」
