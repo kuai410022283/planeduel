@@ -211,6 +211,21 @@ func (h *Hub) TokenOnline(token string) bool {
 	return false
 }
 
+// TokenBusy 表示该身份正在对局或观战中（这类昵称不能回收）。
+func (h *Hub) TokenBusy(token string) bool {
+	if token == "" {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, cl := range h.clients {
+		if cl.Token == token && (cl.room != nil || cl.specRoom != nil) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Hub) markGone(c *Client) {
 	if sr := c.specRoom; sr != nil {
 		sr.mu.Lock()

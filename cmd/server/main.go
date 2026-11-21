@@ -108,6 +108,17 @@ func main() {
 		}
 	}()
 
+	// 昵称回收：离线超过 10 分钟且不在对局中的会话会被释放（每分钟扫一次）
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for range t.C {
+			if n := srv.ReapIdleSessions(10 * time.Minute); n > 0 {
+				log.Printf("[GC] 释放了 %d 个空闲昵称（离线超过 10 分钟）", n)
+			}
+		}
+	}()
+
 	// 定时清理
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
@@ -117,10 +128,7 @@ func main() {
 				log.Printf("[GC] 清理了 %d 局过期对局", n)
 			}
 			sessions.Count() // 顺带触发昵称过期回收
-			// 管理员昵称的空闲回收：关掉的浏览器不该一直占着「管理员 / 管理员2…」
-			if n := srv.ReapIdleAdminSessions(10 * time.Minute); n > 0 {
-				log.Printf("[GC] 释放了 %d 个空闲管理员昵称", n)
-			}
+
 		}
 	}()
 

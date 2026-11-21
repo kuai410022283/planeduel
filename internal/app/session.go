@@ -357,9 +357,9 @@ func (s *SessionStore) List(onlineWithin time.Duration, self string) []PlayerVie
 	return out
 }
 
-// ReapIdleAdmin 释放「离线超过 grace」的管理员会话，让昵称回到「管理员」。
-// 只处理管理员系列（游客昵称仍按 TTL 保留，避免误删别人的名字）。
-func (s *SessionStore) ReapIdleAdmin(grace time.Duration, online func(string) bool) int {
+// ReapIdleSessions 释放「离线超过 grace 且不在对局中」的会话（管理员与游客一视同仁），
+// 让昵称能重新被使用。正在对局/观战的身份一律跳过。
+func (s *SessionStore) ReapIdleSessions(grace time.Duration, online, busy func(string) bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gcLocked()
@@ -367,11 +367,11 @@ func (s *SessionStore) ReapIdleAdmin(grace time.Duration, online func(string) bo
 	cut := time.Now().Add(-grace)
 	n := 0
 	for key, sess := range s.byKey {
-		if !isAdminNick(key) {
-			continue
-		}
 		if online != nil && online(sess.Token) {
-			continue // 还在线，不能动
+			continue // 还连着，不能动
+		}
+		if busy != nil && busy(sess.Token) {
+			continue // 正在对局/观战，绝不能删
 		}
 		if sess.Seen.After(cut) {
 			continue // 离线但还没到 10 分钟

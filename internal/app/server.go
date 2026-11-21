@@ -417,7 +417,8 @@ func readJSON(r *http.Request, v any) error {
 	return json.Unmarshal(b, v)
 }
 
-// ReapIdleAdminSessions 定期清理离线超过 grace 的管理员会话（昵称回到「管理员」）。
-func (s *Server) ReapIdleAdminSessions(grace time.Duration) int {
-	return s.sessions.ReapIdleAdmin(grace, s.hub.TokenOnline)
+// ReapIdleSessions 定期清理「离线超过 grace 且不在对局中」的会话，
+// 管理员与游客昵称都会释放；正在对局/观战的不动。
+func (s *Server) ReapIdleSessions(grace time.Duration) int {
+	return s.sessions.ReapIdleSessions(grace, s.hub.TokenOnline, s.hub.TokenBusy)
 }
