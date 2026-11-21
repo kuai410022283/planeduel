@@ -87,7 +87,7 @@ go vet ./...
 
 ## 部署到飞牛（已实机验证 ✅）
 
-已在目标机器 **`nas.laokhome.cn`（fnOS，x86_64，内核 6.18.18.c1186-trim）** 上完成：打包 → 安装 → 启动 → 网关访问 → 端口开关，全链路验证通过。
+已在目标机器 **`<你的NAS>`（fnOS，x86_64，内核 6.18.18.c1186-trim）** 上完成：打包 → 安装 → 启动 → 网关访问 → 端口开关，全链路验证通过。
 
 | 项 | 值 |
 | --- | --- |
@@ -119,7 +119,7 @@ python dist/gen_icon.py
 
 # 4) 打包上传后在 NAS 上构建
 tar -czf dist/pkg.tar.gz -C dist/pkg planeduel
-pscp -P 5022 dist/pkg.tar.gz laok@nas.laokhome.cn:/home/laok/
+pscp -P 5022 dist/pkg.tar.gz <用户名>@<你的NAS>:/home/laok/
 # NAS 上：
 cd ~ && rm -rf planeduel && tar -xzf pd-pkg.tar.gz
 chmod +x planeduel/cmd/* planeduel/app/planeduel/planeduel-server

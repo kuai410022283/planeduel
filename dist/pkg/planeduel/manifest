@@ -1,13 +1,13 @@
 appname               = planeduel
 version               = 0.9.4
 display_name          = 纸上打飞机
-desc                  = <h3>纸上打飞机 · 联机版</h3><p>10×10 方格、三架 1513 飞机、打中机头即击落 —— 小时候课间在纸上玩的那个游戏，搬到了飞牛上。</p><p><b>核心特性：</b><br/>★ 服务端权威裁判，布阵永不下发给对手<br/>★ 支持「打中连击」「死机残格骗人」等各地土规则<br/>★ 坐标系为行 A–J + 列 1–10，喊号无歧义<br/>★ 纯游客昵称即可开局，昵称全局唯一防重名<br/>★ 统一网关入口 + 可选的独立端口对外访问（面板开关）<br/>★ 断线重连、对局回放（后续版本）</p><p>当前版本为联机骨架版：含规则引擎、热座对局、昵称与端口设置面板。</p>
+desc                  = <h3>纸上打飞机 · 联机版</h3><p>10×10 方格、三架 1513 飞机、打中机头即击落 —— 小时候课间在纸上玩的那个游戏，搬到了飞牛上。</p><p><b>核心特性：</b><br/>★ 服务端权威裁判，未命中的布阵永不下发给对手<br/>★ 邀请对局 / 房间码加入 / 满员自动旁观 / 结束后再来一局<br/>★ 断线 2 分钟内重连接管座位，超时判负<br/>★ 可选规则：交替出手或打中连击、死机残格骗人、每回合 3 或 5 分钟<br/>★ 统一网关入口（固定「管理员」）+ 可选独立端口（游客自动昵称）<br/>★ 适配 PC / 平板 / 手机，无第三方前端依赖</p>
 platform              = x86
 source                = thirdparty
 maintainer            = laok
-maintainer_url        = https://na.laokhome.cn
+maintainer_url        = https://github.com/kuai410022283/planeduel
 distributor           = laok
-distributor_url       = https://na.laokhome.cn
+distributor_url       = https://github.com/kuai410022283/planeduel
 os_min_version        = 1.1.3100
 desktop_uidir         = ui
 desktop_applaunchname = planeduel.Application
