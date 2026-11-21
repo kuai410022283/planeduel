@@ -599,3 +599,32 @@ PC 上改成**左对局 · 中棋盘 · 右玩家**，更接近常见游戏客�
 ```
 
 「点右侧敌情图」这句提示移到状态条的副标题里，不占正文宽度。
+## 构建与打包
+
+所有构建动作都收在 `Makefile` 里，CI 也直接调它（避免本地和 CI 两套命令走偏）：
+
+```bash
+make test     # 跑全部单测
+make build    # 交叉编译 linux/amd64 服务端到打包目录
+make pack     # 打包 .fpk（首次会自动下载 fnpack 1.2.3）
+make all      # test + pack
+make run      # 本地跑起来（管理口 http://127.0.0.1:18088）
+make clean    # 清理产物
+```
+
+产物：`dist/planeduel_x86_v<版本>.fpk`，同时生成 `.sha256`。
+
+### GitHub Actions
+
+`.github/workflows/build-fpk.yml`：
+
+| 触发 | 行为 |
+| --- | --- |
+| push 到 `main` | 跑 `go vet` + `make test`，通过后打包并上传 artifact（保留 14 天） |
+| push tag `v*` | 额外把 fpk 与 sha256 发布到 Release |
+| 手动运行（workflow_dispatch） | 可指定版本号，留空则用 manifest 里的版本 |
+
+打包前会做一次行尾归一（`sed -i 's/\r$//'`），避免 Windows 上提交的 CRLF 让 `cmd/*` 脚本在飞牛里跑不起来；
+仓库同时用 `.gitattributes` 固定这些文件的 LF 存储。
+
+> 需要 arm64 安装包时：manifest 的 `platform` 改为 `all`，并在 `make build` 里加一条 `GOARCH=arm64` 的构建即可（当前只出 x86_64）。

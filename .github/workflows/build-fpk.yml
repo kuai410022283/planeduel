@@ -1,0 +1,115 @@
+name: Build fnOS FPK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（留空则用 manifest 中的版本号）"
+        required: false
+        default: ""
+        type: string
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fnos-fpk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: 单测
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: make test
+        run: make test
+
+  pack:
+    name: 打包 fpk
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 确定版本号
+        id: ver
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          V="${INPUT_VERSION}"
+          if [ -z "${V}" ] && [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "${V}" ]; then
+            V="$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p' dist/pkg/planeduel/manifest | tr -d ' ')"
+          fi
+          if [[ ! "${V}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::版本号必须是 x.y.z 三段数字，当前为 ${V}"
+            exit 1
+          fi
+          sed -i "s/^version[[:space:]]*=.*/version               = ${V}/" dist/pkg/planeduel/manifest
+          echo "version=${V}" >>"${GITHUB_OUTPUT}"
+          grep '^version' dist/pkg/planeduel/manifest
+
+      - name: 行尾归一（保证 cmd 脚本在 Linux 下可执行）
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist/pkg/planeduel/cmd dist/pkg/planeduel/config -type f -exec sed -i 's/\r$//' {} +
+          sed -i 's/\r$//' dist/pkg/planeduel/manifest dist/pkg/planeduel/app/ui/config
+          chmod +x dist/pkg/planeduel/cmd/*
+          file dist/pkg/planeduel/cmd/main
+
+      - name: make pack
+        run: make pack
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: fnos-planeduel-fpk
+          path: |
+            dist/*.fpk
+            dist/*.sha256
+          retention-days: 14
+
+      - name: 打 tag 时发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/*.fpk dist/*.sha256 --clobber
+          else
+            gh release create "${TAG}" dist/*.fpk dist/*.sha256 \
+              --title "纸上打飞机 ${TAG}" \
+              --notes "飞牛 fnOS 安装包（x86_64）。App Center → 手动安装，选择本 fpk 即可。"
+          fi

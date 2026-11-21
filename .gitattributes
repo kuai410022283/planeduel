@@ -1,0 +1,23 @@
+# 统一按 LF 存储，避免 Windows 的 autocrlf 把 shell 脚本变成 CRLF
+* text=auto eol=lf
+
+# 明确指定
+*.go text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.py text eol=lf
+Makefile text eol=lf
+dist/pkg/planeduel/manifest text eol=lf
+dist/pkg/planeduel/cmd/* text eol=lf
+dist/pkg/planeduel/config/* text eol=lf
+dist/pkg/planeduel/app/ui/config text eol=lf
+dist/pkg/planeduel/wizard/* text eol=lf
+
+# 二进制
+*.png binary
+*.PNG binary
+*.jpg binary
+*.fpk binary
