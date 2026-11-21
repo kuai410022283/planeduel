@@ -1,0 +1,7 @@
+#!/bin/bash
+### 安装完成后尝试自动启动；失败也不阻断安装（应用中心可手动启动）
+DIR=$(cd "$(dirname "$0")" && pwd)
+if [ -x "${DIR}/main" ]; then
+    "${DIR}/main" start >> "${TRIM_PKGVAR}/info.log" 2>&1 || true
+fi
+exit 0

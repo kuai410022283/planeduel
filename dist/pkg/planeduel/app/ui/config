@@ -1,0 +1,14 @@
+{
+    ".url": {
+        "planeduel.Application": {
+            "title": "纸上打飞机",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "protocol": "",
+            "url": "/app/planeduel/",
+            "gatewaySocket": "app.sock",
+            "gatewayPrefix": "/app/planeduel",
+            "allUsers": true
+        }
+    }
+}

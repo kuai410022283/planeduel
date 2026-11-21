@@ -1,0 +1,23 @@
+# 编译产物
+bin/
+*.exe
+dist/*.fpk
+dist/pkg.tar.gz
+dist/pkg/planeduel/app/planeduel/planeduel-server
+dist/pkg/planeduel/planeduel.fpk
+
+# 本地运行数据（配置里有管理口令，绝不入库）
+data/
+*.log
+
+# 构建缓存
+.gocache/
+
+# 临时输出
+*.out.txt
+*.err.txt
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini

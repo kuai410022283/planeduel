@@ -1,0 +1,7 @@
+#!/bin/bash
+### 升级后：重新启动（数据目录不变，config.json 与对局数据保留）
+DIR=$(cd "$(dirname "$0")" && pwd)
+if [ -x "${DIR}/main" ]; then
+    "${DIR}/main" start >> "${TRIM_PKGVAR}/info.log" 2>&1 || true
+fi
+exit 0

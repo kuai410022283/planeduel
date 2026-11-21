@@ -1,0 +1,117 @@
+#!/bin/bash
+# 纸上打飞机 —— fnOS 生命周期：start / stop / status
+# 服务通过飞牛统一网关暴露：监听 ${TRIM_APPDEST}/app.sock，网关转发 /app/planeduel/*
+#
+# 兜底：手工执行（没有 TRIM_* 环境变量）时，按脚本位置推导路径，
+# 方便 SSH 进去做故障恢复。
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+APP_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
+DEST="${TRIM_APPDEST:-${APP_ROOT}/target}"
+VAR="${TRIM_PKGVAR:-${APP_ROOT}/var}"
+
+BIN="${DEST}/planeduel/planeduel-server"
+LOG_FILE="${VAR}/info.log"
+PID_FILE="${VAR}/app.pid"
+DATA_DIR="${VAR}/data"
+ADMIN_LISTEN="127.0.0.1:18088"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
+}
+
+is_running() {
+    [ -f "${PID_FILE}" ] || return 1
+    local pid
+    pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+    [ -n "${pid}" ] || return 1
+    kill -0 "${pid}" 2>/dev/null
+}
+
+start_process() {
+    if is_running; then
+        log_msg "already running (pid=$(cat "${PID_FILE}"))"
+        return 0
+    fi
+    if [ ! -d "${DEST}" ]; then
+        echo "应用目录不存在：${DEST}" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+        log_msg "ERROR: DEST not found: ${DEST}"
+        return 1
+    fi
+    if [ ! -x "${BIN}" ]; then
+        log_msg "ERROR: binary not executable: ${BIN}"
+        echo "服务程序缺失或不可执行：${BIN}" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+        return 1
+    fi
+
+    mkdir -p "${DATA_DIR}"
+    log_msg "starting: ${BIN} (dest=${DEST}, data=${DATA_DIR})"
+
+    TRIM_APPDEST="${DEST}" \
+    PD_DATA="${DATA_DIR}" \
+    PD_ADMIN_LISTEN="${ADMIN_LISTEN}" \
+    nohup "${BIN}" >> "${LOG_FILE}" 2>&1 &
+
+    local pid=$!
+    printf "%s" "${pid}" > "${PID_FILE}"
+    log_msg "started pid=${pid}"
+
+    local i=0
+    while [ ${i} -lt 15 ]; do
+        if [ -S "${DEST}/app.sock" ]; then
+            log_msg "gateway socket ready"
+            return 0
+        fi
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            log_msg "ERROR: process exited during startup"
+            rm -f "${PID_FILE}"
+            return 1
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    log_msg "WARNING: socket not ready in 15s (gateway may return Not Found)"
+    return 0
+}
+
+stop_process() {
+    if [ -f "${PID_FILE}" ]; then
+        local pid
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+            log_msg "stopping pid=${pid}"
+            kill -TERM "${pid}" 2>/dev/null
+            local i=0
+            while kill -0 "${pid}" 2>/dev/null && [ ${i} -lt 10 ]; do
+                sleep 1
+                i=$((i + 1))
+            done
+            kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null
+        fi
+        rm -f "${PID_FILE}"
+    fi
+    # 兜底：安装回调与手动启动撞车时可能留下多个实例，这里一并清掉
+    pkill -f "${BIN}" 2>/dev/null || true
+    rm -f "${DEST}/app.sock"
+    log_msg "stopped"
+    return 0
+}
+
+case "$1" in
+    start)
+        start_process
+        ;;
+    stop)
+        stop_process
+        ;;
+    status)
+        if is_running; then
+            exit 0
+        else
+            exit 3
+        fi
+        ;;
+    *)
+        exit 1
+        ;;
+esac

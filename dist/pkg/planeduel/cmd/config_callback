@@ -1,0 +1,8 @@
+#!/bin/bash
+### 配置变更后：重启服务使新配置生效
+DIR=$(cd "$(dirname "$0")" && pwd)
+if [ -x "${DIR}/main" ]; then
+    "${DIR}/main" stop >> "${TRIM_PKGVAR}/info.log" 2>&1 || true
+    "${DIR}/main" start >> "${TRIM_PKGVAR}/info.log" 2>&1 || true
+fi
+exit 0

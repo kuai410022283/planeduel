@@ -1,0 +1,7 @@
+#!/bin/bash
+### 卸载后：清理网关 socket（数据目录由系统按用户选择处理）
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+DEST="${TRIM_APPDEST:-$(cd "${SCRIPT_DIR}/.." && pwd)/target}"
+pkill -f "${DEST}/planeduel/planeduel-server" 2>/dev/null || true
+rm -f "${DEST}/app.sock" 2>/dev/null || true
+exit 0

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>纸上打飞机</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">✈</span>
+    <div class="brand-text">
+      <h1>纸上打飞机</h1>
+      <p class="sub">10 × 10 · 三架 1513 飞机 · 击落机头</p>
+    </div>
+  </div>
+  <div class="me">
+    <span id="conn" class="chip"></span>
+    <button id="reconnect" class="btn-sm ghost" hidden>立即重连</button>
+    <span id="me-name" class="chip chip-name" hidden></span>
+    <span class="nick-edit" id="nick-edit">
+      <input id="nick" placeholder="昵称" maxlength="12" autocomplete="off">
+      <button id="nick-save" class="btn-sm">改名</button>
+    </span>
+    <span id="nick-msg" class="msg"></span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <section class="sheet">
+    <div class="turnbar" id="turnbar">
+      <span class="tb-main" id="turnbar-main">准备开始</span>
+      <span class="tb-sub" id="turnbar-sub"></span>
+      <span class="tb-timer" id="duel-timer"></span>
+    </div>
+
+    <div class="sheet-head">
+      <div class="grid-title" id="title-mine">布 阵 图<span>我方的三架飞机</span></div>
+      <div class="grid-title" id="title-enemy">敌 情 图<span>记录我打出的结果</span></div>
+    </div>
+
+    <div class="sheets">
+      <div class="grid-wrap"><div class="board" id="board-mine"></div></div>
+      <div class="grid-wrap"><div class="board" id="board-enemy"></div></div>
+    </div>
+
+    <div class="legend">
+      <span><b class="sw own"></b>我方飞机</span>
+      <span><b class="sw miss">○</b>空</span>
+      <span><b class="sw hit">×</b>中（伤）</span>
+      <span><b class="sw kill">◎</b>死（机头）</span>
+    </div>
+  </section>
+
+  <aside class="side">
+
+    <div class="card" id="duel-card">
+      <h2>对局</h2>
+
+      <div id="idle-box">
+        <button id="new-game" class="primary wide">练习：随机陪练</button>
+
+        <div class="divider"><span>或者和真人打</span></div>
+
+        <div class="field">
+          <label class="f-label" for="join-code">房间码</label>
+          <div class="input-group">
+            <input id="join-code" placeholder="输入 6 位房间码" maxlength="6" autocomplete="off">
+            <button id="join-btn" class="primary">加入</button>
+          </div>
+          <p class="hint">房间坐满 2 人后，加入会自动转为旁观。</p>
+        </div>
+
+        <button id="create-btn" class="ghost wide">创建房间</button>
+
+        <div class="field">
+          <span class="f-label">每回合时限</span>
+          <div class="seg" id="turn-limit" role="group">
+            <button type="button" data-v="180">3 分钟</button>
+            <button type="button" data-v="300" class="on">5 分钟</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="f-label">出手规则</span>
+          <div class="seg" id="rule-continue" role="group">
+            <button type="button" data-v="0" class="on">交替出手</button>
+            <button type="button" data-v="1">打中连击</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="spec-box" hidden>
+        <p class="status" id="spec-status">观战中</p>
+        <button id="spec-leave" class="ghost wide">退出观战</button>
+      </div>
+
+      <div id="duel-box" hidden>
+        <p class="status" id="duel-status">—</p>
+
+        <div class="codebox">
+          <span class="codebox-label">房间码</span>
+          <code id="duel-code">—</code>
+          <button id="duel-copy" class="btn-sm" title="复制房间码">复制</button>
+        </div>
+
+        <button id="duel-rematch" class="primary wide" hidden>再来一局</button>
+        <button id="duel-leave" class="ghost wide">离开房间</button>
+      </div>
+
+      <dl class="stats" id="stats" hidden>
+        <div><dt>我的活机</dt><dd id="st-alive">-</dd></div>
+        <div><dt>对方活机</dt><dd id="st-enemy">-</dd></div>
+        <div><dt>我打了</dt><dd id="st-shots">-</dd></div>
+        <div><dt>我命中</dt><dd id="st-hits">-</dd></div>
+      </dl>
+      <p class="log" id="log"></p>
+    </div>
+
+    <div class="card" id="players-card">
+      <h2>在线玩家<span class="counter" id="online-count"></span></h2>
+      <div class="player-tools" id="player-tools" hidden>
+        <input id="player-search" placeholder="搜索昵称" autocomplete="off">
+      </div>
+      <ul class="players" id="players">
+        <li class="empty">还没有人进来</li>
+      </ul>
+    </div>
+
+    <div class="card" id="settings-card" hidden>
+      <h2>设置<span class="tag">仅网关</span></h2>
+
+      <div class="row" id="token-row" hidden>
+        <div class="input-group">
+          <input id="token" placeholder="管理口令（见日志）" autocomplete="off">
+          <button id="token-load" class="btn-sm">读取</button>
+        </div>
+      </div>
+
+      <div id="settings-box" hidden>
+        <div class="field">
+          <span class="f-label">对外访问</span>
+          <label class="toggle">
+            <input type="checkbox" id="port-enabled">
+            <span class="track"><i class="knob"></i></span>
+            <span class="txt">允许独立端口访问</span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label class="f-label" for="port">端口号</label>
+          <div class="input-group">
+            <input id="port" type="number" min="1" max="65535" value="28082">
+            <button id="port-apply" class="primary">应用</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="hint" id="port-status">独立端口默认关闭，仅飞牛网关可管理。</p>
+    </div>
+
+  </aside>
+</main>
+
+<div class="modal" id="invite-modal" hidden>
+  <div class="modal-card">
+    <h3 id="invite-from">邀请</h3>
+    <p class="modal-text">邀请你打一局「纸上打飞机」，接受吗？</p>
+    <div class="row modal-actions">
+      <button id="invite-accept" class="primary">接受</button>
+      <button id="invite-decline" class="ghost">拒绝</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
